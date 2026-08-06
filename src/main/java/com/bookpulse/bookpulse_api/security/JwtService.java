@@ -34,8 +34,8 @@ public class JwtService {
      */
     public String generateToken(User user) {
         Map<String, Object> extraClaims = new HashMap<>();
-        extraClaims.put("role", user.getRole().name());
-        extraClaims.put("name", user.getName());
+        extraClaims.put("role", user.getRole().name()); // O user.getRole().toString()
+        extraClaims.put("name", user.getName());        // Extraemos el nombre directamente del User
 
         return Jwts.builder()
                 .claims(extraClaims)

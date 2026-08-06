@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
  * * @author Cristian
  */
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*") // Permite que Angular se conecte sin problemas de CORS
 public class AuthController {
