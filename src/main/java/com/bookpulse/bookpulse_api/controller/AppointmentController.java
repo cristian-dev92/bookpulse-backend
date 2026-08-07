@@ -23,8 +23,8 @@ import java.util.List;
  * @since 1.0
  */
 @RestController
-@RequestMapping("/api/appointments")
-@CrossOrigin(origins = "http://localhost:4200") // Permite la conexión nativa con Angular
+@RequestMapping("/api/v1/appointments")
+@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:4200"}) // Permite la conexión nativa con Angular
 public class AppointmentController {
 
     private final AppointmentService appointmentService;
@@ -39,19 +39,27 @@ public class AppointmentController {
         this.appointmentService = appointmentService;
     }
 
+    // 1. GET /api/v1/appointments -> Cargar citas
+    @GetMapping
+    public ResponseEntity<List<Appointment>> getMyAppointments() {
+        // Devuelve las citas del usuario o todas según tu lógica de negocio
+        List<Appointment> appointments = appointmentService.getAllAppointments();
+        return ResponseEntity.ok(appointments);
+    }
+
     /**
      * Obtiene la lista de horas de inicio disponibles para reservar en una fecha concreta.
      * <p>
-     * Ejemplo de uso: {@code GET /api/appointments/available?date=2026-06-15}
+     * Ejemplo de uso: {@code GET /api/v1/appointments/available?date=2026-06-15}
      * </p>
      *
      * @param date Fecha a consultar en formato ISO (yyyy-MM-dd).
      * @return Una respuesta HTTP 200 OK con la lista de {@link LocalDateTime} disponibles.
      */
+    // 2. GET /api/v1/appointments/available?date=YYYY-MM-DD -> Huecos libres
     @GetMapping("/available")
     public ResponseEntity<List<LocalDateTime>> getAvailableSlots(
             @RequestParam("date") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-
         List<LocalDateTime> availableSlots = appointmentService.getAvailableSlotsForDay(date);
         return ResponseEntity.ok(availableSlots);
     }
@@ -65,11 +73,28 @@ public class AppointmentController {
      * @param startTime Fecha y hora exacta del hueco que el cliente desea bloquear.
      * @return Una respuesta HTTP 201 CREATED con el objeto {@link Appointment} generado.
      */
+    // 3. POST /api/v1/appointments/reserve?startTime=... -> Reservar
     @PostMapping("/reserve")
     public ResponseEntity<Appointment> reserveSlot(
             @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime) {
-
         Appointment currentReservation = appointmentService.reserveSlot(startTime);
         return new ResponseEntity<>(currentReservation, HttpStatus.CREATED);
     }
+
+    // 4. DELETE /api/v1/appointments/{id} -> Cancelar cita
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Appointment> cancelAppointment(@PathVariable Long id) {
+        Appointment cancelledAppointment = appointmentService.cancelAppointment(id);
+        return ResponseEntity.ok(cancelledAppointment);
+    }
+
+    // 5. PUT /api/v1/appointments/{id}/reschedule?newStartTime=... -> Reprogramar cita
+    @PutMapping("/{id}/reschedule")
+    public ResponseEntity<Appointment> rescheduleAppointment(
+            @PathVariable Long id,
+            @RequestParam("newStartTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime newStartTime) {
+        Appointment updatedAppointment = appointmentService.rescheduleAppointment(id, newStartTime);
+        return ResponseEntity.ok(updatedAppointment);
+    }
+
 }

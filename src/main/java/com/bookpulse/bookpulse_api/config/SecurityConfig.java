@@ -45,7 +45,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable) // Deshabilitamos CSRF porque usaremos tokens JWT
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/**").permitAll()
-                        .requestMatchers("/api/appointments/**").permitAll() // Tus endpoints de citas libres
+                        .requestMatchers("/api/v1/appointments/**").permitAll() // Tus endpoints de citas libres
                         .anyRequest().permitAll() // Permitimos el resto temporalmente para construir el login
                 );
 

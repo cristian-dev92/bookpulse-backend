@@ -105,4 +105,61 @@ public class AppointmentService {
         // Al guardar, Hibernate gestiona el campo @Version automáticamente
         return appointmentRepository.save(newAppointment);
     }
+
+    /**
+     * Recupera la lista completa de todas las citas registradas en el sistema.
+     * <p>
+     * Se marca como {@code readOnly = true} para optimizar el rendimiento de la transacción en PostgreSQL.
+     * </p>
+     *
+     * @return Una lista con todas las entidades {@link Appointment}.
+     */
+    @Transactional(readOnly = true)
+    public List<Appointment> getAllAppointments() {
+        return appointmentRepository.findAll();
+    }
+
+    /**
+     * Cancela una cita cambiando su estado a CANCELLED.
+     *
+     * @param id Identificador de la cita a cancelar.
+     * @return La entidad {@link Appointment} actualizada.
+     */
+    @Transactional
+    public Appointment cancelAppointment(Long id) {
+        Appointment appointment = appointmentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + id));
+
+        appointment.setStatus(AppointmentStatus.CANCELLED);
+        return appointmentRepository.save(appointment);
+    }
+
+    /**
+     * Reprograma una cita cambiando su fecha y hora de inicio.
+     *
+     * @param id           Identificador de la cita.
+     * @param newStartTime Nueva fecha y hora de inicio.
+     * @return La entidad {@link Appointment} actualizada.
+     */
+    @Transactional
+    public Appointment rescheduleAppointment(Long id, LocalDateTime newStartTime) {
+        Appointment appointment = appointmentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + id));
+
+        int durationMinutes = 60;
+        LocalDateTime newEndTime = newStartTime.plusMinutes(durationMinutes);
+
+        // Verificar solapamientos excluyendo la cita actual
+        List<Appointment> overlapping = appointmentRepository.findByStartTimeBetween(newStartTime, newEndTime);
+        for (Appointment app : overlapping) {
+            if (!app.getId().equals(id) && app.getStatus() != AppointmentStatus.CANCELLED) {
+                throw new IllegalArgumentException("El nuevo hueco seleccionado ya no está disponible.");
+            }
+        }
+
+        appointment.setStartTime(newStartTime);
+        appointment.setEndTime(newEndTime);
+        return appointmentRepository.save(appointment);
+    }
+
 }
