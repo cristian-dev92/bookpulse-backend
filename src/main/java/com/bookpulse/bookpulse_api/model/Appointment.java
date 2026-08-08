@@ -44,6 +44,10 @@ public class Appointment {
     @Column(name = "status", nullable = false)
     private AppointmentStatus status;
 
+    @ManyToOne
+    @JoinColumn(name = "user_id")
+    private User user;
+
     /**
      * Campo de control de versión para el bloqueo optimista (Optimistic Locking).
      * <p>

@@ -7,6 +7,6 @@ import lombok.Data;
 public class UpdateProfileRequestDTO {
     @NotBlank(message = "El nombre no puede estar vacío")
     private String name;
-
+    private String email;
     private String phone;
 }

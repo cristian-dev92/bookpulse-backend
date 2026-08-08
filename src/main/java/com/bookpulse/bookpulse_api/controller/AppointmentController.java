@@ -1,6 +1,7 @@
 package com.bookpulse.bookpulse_api.controller;
 
 import com.bookpulse.bookpulse_api.model.Appointment;
+import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import com.bookpulse.bookpulse_api.service.AppointmentService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -95,6 +96,22 @@ public class AppointmentController {
             @RequestParam("newStartTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime newStartTime) {
         Appointment updatedAppointment = appointmentService.rescheduleAppointment(id, newStartTime);
         return ResponseEntity.ok(updatedAppointment);
+    }
+
+    // GET /api/v1/appointments/admin/all -> Listar todas las citas para el Administrador
+    @GetMapping("/admin/all")
+    public ResponseEntity<List<Appointment>> getAllAppointmentsForAdmin() {
+        List<Appointment> allAppointments = appointmentService.getAllAppointments();
+        return ResponseEntity.ok(allAppointments);
+    }
+
+    // PATCH /api/v1/appointments/{id}/status?status=CONFIRMED -> Cambiar estado de la cita
+    @PatchMapping("/{id}/status")
+    public ResponseEntity<Appointment> updateAppointmentStatus(
+            @PathVariable Long id,
+            @RequestParam("status") AppointmentStatus status) {
+        Appointment updated = appointmentService.updateAppointmentStatus(id, status);
+        return ResponseEntity.ok(updated);
     }
 
 }

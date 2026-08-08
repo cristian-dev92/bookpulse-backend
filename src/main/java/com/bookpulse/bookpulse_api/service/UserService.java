@@ -75,4 +75,39 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
         userRepository.save(user);
     }
+
+    /**
+     * Permite al Administrador actualizar los datos (nombre, email, teléfono) de cualquier usuario por su ID.
+     */
+    @Transactional
+    public UserProfileResponseDTO updateUserByAdmin(Long id, UpdateProfileRequestDTO dto) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado con ID: " + id));
+
+        // Validación: si se cambia el email, verificar que no pertenezca a otro usuario
+        if (dto.getEmail() != null && !dto.getEmail().equalsIgnoreCase(user.getEmail())) {
+            if (userRepository.existsByEmail(dto.getEmail())) {
+                throw new IllegalArgumentException("El email ya está en uso por otro usuario");
+            }
+            user.setEmail(dto.getEmail());
+        }
+
+        user.setName(dto.getName());
+
+        // Si el DTO incluye teléfono, se actualiza también
+        if (dto.getPhone() != null) {
+            user.setPhone(dto.getPhone());
+        }
+
+        User updatedUser = userRepository.save(user);
+
+        return UserProfileResponseDTO.builder()
+                .id(updatedUser.getId())
+                .name(updatedUser.getName())
+                .email(updatedUser.getEmail())
+                .phone(updatedUser.getPhone())
+                .role(updatedUser.getRole())
+                .build();
+    }
+
 }

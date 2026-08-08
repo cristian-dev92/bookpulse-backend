@@ -3,6 +3,9 @@ package com.bookpulse.bookpulse_api.service;
 import com.bookpulse.bookpulse_api.dto.AuthResponse;
 import com.bookpulse.bookpulse_api.dto.LoginRequest;
 import com.bookpulse.bookpulse_api.dto.RegisterRequest;
+import com.bookpulse.bookpulse_api.exception.InvalidCredentialsException;
+import com.bookpulse.bookpulse_api.exception.ResourceNotFoundException;
+import com.bookpulse.bookpulse_api.exception.UserAlreadyExistsException;
 import com.bookpulse.bookpulse_api.model.Role;
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.UserRepository;
@@ -28,8 +31,8 @@ public class AuthService {
      */
     public AuthResponse register(RegisterRequest request) {
         // Verificamos si el email ya existe
-        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
-            throw new RuntimeException("El correo electrónico ya está registrado");
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new UserAlreadyExistsException("El correo electrónico ya está registrado");
         }
 
         User user = new User();
@@ -55,11 +58,11 @@ public class AuthService {
      */
     public AuthResponse login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+                .orElseThrow(() -> new InvalidCredentialsException("Correo electrónico o contraseña incorrectos"));
 
         // Comparamos la contraseña en texto plano con el hash encriptado de la BD
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Contraseña incorrecta");
+            throw new InvalidCredentialsException("Correo electrónico o contraseña incorrectos");
         }
 
         String token = jwtService.generateToken(user);

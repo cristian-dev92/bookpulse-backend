@@ -1,5 +1,6 @@
 package com.bookpulse.bookpulse_api.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.security.core.GrantedAuthority;
@@ -40,6 +41,10 @@ public class User implements UserDetails {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;
+
+    @OneToMany(mappedBy = "user")
+    @JsonIgnore // 🛑 Crucial para que no rompa al devolver el JSON
+    private List<Appointment> appointments;
 
     // Métodos obligatorios de UserDetails para que Spring Security gestione los permisos
 

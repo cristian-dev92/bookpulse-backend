@@ -162,4 +162,12 @@ public class AppointmentService {
         return appointmentRepository.save(appointment);
     }
 
+    @Transactional
+    public Appointment updateAppointmentStatus(Long id, AppointmentStatus status) {
+        Appointment appointment = appointmentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
+        appointment.setStatus(status);
+        return appointmentRepository.save(appointment);
+    }
+
 }

@@ -1,13 +1,15 @@
 package com.bookpulse.bookpulse_api.config;
 
+import com.bookpulse.bookpulse_api.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -15,48 +17,44 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 /**
- * Configuración global de seguridad para la API de BookPulse.
- * <p>
- * Define las reglas de acceso a los endpoints, la política de sesiones
- * y el codificador de contraseñas oficial del sistema.
- * </p>
- *
- * @author Cristian
+ * Configuración de rutas y filtros HTTP para Spring Security.
  */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
-    /**
-     * Define la cadena de filtros de seguridad.
-     * <p>
-     * De momento, permite el acceso total a todas las rutas para que podamos
-     * probar el flujo de citas mientras implementamos el registro de usuarios.
-     * </p>
-     *
-     * @param http Componente de configuración de seguridad inyectado por Spring.
-     * @return La configuración del filtro construida.
-     * @throws Exception Si ocurre un fallo en la configuración de los filtros.
-     */
+    private final JwtAuthenticationFilter jwtAuthFilter;
+    private final AuthenticationProvider authenticationProvider;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter, AuthenticationProvider authenticationProvider) {
+        this.jwtAuthFilter = jwtAuthFilter;
+        this.authenticationProvider = authenticationProvider;
+    }
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .csrf(AbstractHttpConfigurer::disable) // Deshabilitamos CSRF porque usaremos tokens JWT
+                .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/**").permitAll()
-                        .requestMatchers("/api/v1/appointments/**").permitAll() // Tus endpoints de citas libres
-                        .anyRequest().permitAll() // Permitimos el resto temporalmente para construir el login
-                );
+                        .requestMatchers("/api/v1/appointments/**").permitAll()
+                        .requestMatchers("/error").permitAll()
+                        .anyRequest().authenticated()
+                )
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+                .authenticationProvider(authenticationProvider)
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    // Definimos la fuente de configuración de CORS permitida
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173")); // El origen de tu React
+        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
         configuration.setAllowCredentials(true);
@@ -64,20 +62,5 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
-    }
-
-    /**
-     * Define el algoritmo de encriptación para las contraseñas de los usuarios.
-     * <p>
-     * Utiliza BCrypt, un algoritmo de hashing seguro que aplica "salado" (salts)
-     * aleatorios de forma nativa para evitar ataques de tablas arcoíris.
-     * </p>
-     *
-     * @return Una instancia de {@link BCryptPasswordEncoder}.
-     */
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-
-        return new BCryptPasswordEncoder();
     }
 }

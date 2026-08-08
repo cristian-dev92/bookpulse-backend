@@ -5,7 +5,9 @@ import com.bookpulse.bookpulse_api.dto.UpdateProfileRequestDTO;
 import com.bookpulse.bookpulse_api.dto.UserProfileResponseDTO;
 import com.bookpulse.bookpulse_api.service.UserService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
@@ -30,6 +32,11 @@ public class UserController {
     // GET /api/v1/users/me -> Obtener perfil del usuario autenticado
     @GetMapping("/me")
     public ResponseEntity<UserProfileResponseDTO> getMyProfile(@AuthenticationPrincipal UserDetails userDetails) {
+
+        if (userDetails == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
         UserProfileResponseDTO profile = userService.getUserProfile(userDetails.getUsername());
         return ResponseEntity.ok(profile);
     }
@@ -51,4 +58,16 @@ public class UserController {
         userService.changePassword(userDetails.getUsername(), dto);
         return ResponseEntity.ok().build();
     }
+
+    // PUT /api/v1/users/admin/{id} -> Actualizar datos de cualquier cliente desde el panel admin
+    @PutMapping("/admin/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UserProfileResponseDTO> updateUserByAdmin(
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateProfileRequestDTO dto) {
+
+        UserProfileResponseDTO updatedUser = userService.updateUserByAdmin(id, dto);
+        return ResponseEntity.ok(updatedUser);
+    }
+
 }
