@@ -2,6 +2,7 @@ package com.bookpulse.bookpulse_api.service;
 
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
+import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.AppointmentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -82,7 +83,7 @@ public class AppointmentService {
      * @throws IllegalArgumentException Si la hora seleccionada ya se encuentra reservada.
      */
     @Transactional
-    public Appointment reserveSlot(LocalDateTime startTime) {
+    public Appointment reserveSlot(LocalDateTime startTime, User user) {
         int durationMinutes = 60; // Debe coincidir con la configuración del cálculo
         LocalDateTime endTime = startTime.plusMinutes(durationMinutes);
 
@@ -101,6 +102,7 @@ public class AppointmentService {
         newAppointment.setStartTime(startTime);
         newAppointment.setEndTime(endTime);
         newAppointment.setStatus(AppointmentStatus.PENDING);
+        newAppointment.setUser(user);
 
         // Al guardar, Hibernate gestiona el campo @Version automáticamente
         return appointmentRepository.save(newAppointment);
@@ -168,6 +170,11 @@ public class AppointmentService {
                 .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
         appointment.setStatus(status);
         return appointmentRepository.save(appointment);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Appointment> getAppointmentsByUserId(Long userId) {
+        return appointmentRepository.findByUserId(userId);
     }
 
 }

@@ -24,4 +24,12 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
      * @return Una lista de {@link Appointment} encontradas en ese intervalo.
      */
     List<Appointment> findByStartTimeBetween(LocalDateTime start, LocalDateTime end);
+
+    /**
+     * Recupera todas las citas asociadas a un usuario específico.
+     *
+     * @param userId ID del usuario.
+     * @return Una lista de {@link Appointment} pertenecientes al usuario.
+     */
+    List<Appointment> findByUserId(Long userId);
 }

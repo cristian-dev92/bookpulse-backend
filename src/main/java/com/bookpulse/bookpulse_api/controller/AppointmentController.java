@@ -2,11 +2,14 @@ package com.bookpulse.bookpulse_api.controller;
 
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
+import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.service.AppointmentService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -40,11 +43,11 @@ public class AppointmentController {
         this.appointmentService = appointmentService;
     }
 
-    // 1. GET /api/v1/appointments -> Cargar citas
+    // 1. GET /api/v1/appointments -> Devuelve SOLO las citas del usuario con sesión activa
     @GetMapping
-    public ResponseEntity<List<Appointment>> getMyAppointments() {
-        // Devuelve las citas del usuario o todas según tu lógica de negocio
-        List<Appointment> appointments = appointmentService.getAllAppointments();
+    public ResponseEntity<List<Appointment>> getMyAppointments(@AuthenticationPrincipal User currentUser) {
+        // En lugar de getAllAppointments(), llamamos al servicio pasando la ID del usuario logueado
+        List<Appointment> appointments = appointmentService.getAppointmentsByUserId(currentUser.getId());
         return ResponseEntity.ok(appointments);
     }
 
@@ -77,8 +80,10 @@ public class AppointmentController {
     // 3. POST /api/v1/appointments/reserve?startTime=... -> Reservar
     @PostMapping("/reserve")
     public ResponseEntity<Appointment> reserveSlot(
-            @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime) {
-        Appointment currentReservation = appointmentService.reserveSlot(startTime);
+            @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+            @AuthenticationPrincipal User currentUser) {
+            // Pasa el usuario autenticado al servicio para vincular la reserva
+        Appointment currentReservation = appointmentService.reserveSlot(startTime, currentUser);
         return new ResponseEntity<>(currentReservation, HttpStatus.CREATED);
     }
 
@@ -100,6 +105,7 @@ public class AppointmentController {
 
     // GET /api/v1/appointments/admin/all -> Listar todas las citas para el Administrador
     @GetMapping("/admin/all")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<Appointment>> getAllAppointmentsForAdmin() {
         List<Appointment> allAppointments = appointmentService.getAllAppointments();
         return ResponseEntity.ok(allAppointments);

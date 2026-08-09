@@ -1,13 +1,15 @@
 package com.bookpulse.bookpulse_api.service;
 
-import com.bookpulse.bookpulse_api.dto.ChangePasswordRequestDTO;
-import com.bookpulse.bookpulse_api.dto.UpdateProfileRequestDTO;
-import com.bookpulse.bookpulse_api.dto.UserProfileResponseDTO;
+import com.bookpulse.bookpulse_api.dto.*;
+import com.bookpulse.bookpulse_api.model.Role; // Asegúrate de importar tu Enum/Clase Role si existe
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class UserService {
@@ -20,27 +22,25 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
     }
 
+    // ==========================================
+    // METODOS DE PERFIL DE USUARIO
+    // ==========================================
+
     /**
      * Obtiene la información del perfil del usuario autenticado.
      */
-    public UserProfileResponseDTO getUserProfile(String email) {
+    public UserResponseDTO getUserProfile(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado"));
 
-        return UserProfileResponseDTO.builder()
-                .id(user.getId())
-                .name(user.getName())
-                .email(user.getEmail())
-                .phone(user.getPhone())
-                .role(user.getRole())
-                .build();
+        return mapToDTO(user);
     }
 
     /**
      * Actualiza los datos personales (nombre, teléfono).
      */
     @Transactional
-    public UserProfileResponseDTO updateProfile(String email, UpdateProfileRequestDTO dto) {
+    public UserResponseDTO updateProfile(String email, UpdateProfileRequestDTO dto) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado"));
 
@@ -48,14 +48,7 @@ public class UserService {
         user.setPhone(dto.getPhone());
 
         User updatedUser = userRepository.save(user);
-
-        return UserProfileResponseDTO.builder()
-                .id(updatedUser.getId())
-                .name(updatedUser.getName())
-                .email(updatedUser.getEmail())
-                .phone(updatedUser.getPhone())
-                .role(updatedUser.getRole())
-                .build();
+        return mapToDTO(updatedUser);
     }
 
     /**
@@ -66,25 +59,58 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado"));
 
-        // Validar contraseña actual
         if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
             throw new IllegalArgumentException("La contraseña actual es incorrecta");
         }
 
-        // Cifrar e intentar actualizar la nueva contraseña
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
         userRepository.save(user);
     }
 
+    // ==========================================
+    // MÉTODOS DE ADMINISTRACIÓN (ADMIN)
+    // ==========================================
+
     /**
-     * Permite al Administrador actualizar los datos (nombre, email, teléfono) de cualquier usuario por su ID.
+     * Devuelve el listado completo de todos los usuarios registrados.
+     */
+    public List<UserResponseDTO> findAllUsers() {
+        return userRepository.findAll().stream()
+                .map(this::mapToDTO)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Permite al Administrador cambiar únicamente el rol de un usuario.
      */
     @Transactional
-    public UserProfileResponseDTO updateUserByAdmin(Long id, UpdateProfileRequestDTO dto) {
+    public UserResponseDTO updateRole(Long id, String newRoleStr) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado con ID: " + id));
 
-        // Validación: si se cambia el email, verificar que no pertenezca a otro usuario
+        try {
+            // Si tu entidad usa Enum Role, descomenta la siguiente línea:
+            user.setRole(Role.valueOf(newRoleStr.toUpperCase()));
+
+            // Si en tu entidad role es un String, usa:
+            // user.setRole(newRoleStr.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Rol no válido: " + newRoleStr);
+        }
+
+        User updatedUser = userRepository.save(user);
+        return mapToDTO(updatedUser);
+    }
+
+    /**
+     * Permite al Administrador una edición completa (Nombre, Email, Teléfono, Rol y Contraseña opcional).
+     */
+    @Transactional
+    public UserResponseDTO adminUpdateUser(Long id, AdminUpdateUserRequestDTO dto) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado con ID: " + id));
+
+        // 1. Validar y actualizar email
         if (dto.getEmail() != null && !dto.getEmail().equalsIgnoreCase(user.getEmail())) {
             if (userRepository.existsByEmail(dto.getEmail())) {
                 throw new IllegalArgumentException("El email ya está en uso por otro usuario");
@@ -92,22 +118,53 @@ public class UserService {
             user.setEmail(dto.getEmail());
         }
 
-        user.setName(dto.getName());
-
-        // Si el DTO incluye teléfono, se actualiza también
+        // 2. Actualizar campos básicos
+        if (dto.getName() != null) {
+            user.setName(dto.getName());
+        }
         if (dto.getPhone() != null) {
             user.setPhone(dto.getPhone());
         }
 
-        User updatedUser = userRepository.save(user);
+        // 3. Actualizar Rol (Directamente asignando el Enum si dto.getRole() devuelve Role)
+        if (dto.getRole() != null) {
+            user.setRole(Role.valueOf(dto.getRole()));
+            // Si en tu DTO role sigue siendo un String, usa en su lugar:
+            // user.setRole(Role.valueOf(dto.getRole().toString().trim().toUpperCase()));
+        }
 
-        return UserProfileResponseDTO.builder()
-                .id(updatedUser.getId())
-                .name(updatedUser.getName())
-                .email(updatedUser.getEmail())
-                .phone(updatedUser.getPhone())
-                .role(updatedUser.getRole())
-                .build();
+        // 4. Actualizar contraseña si se ha proporcionado una nueva
+        if (dto.getNewPassword() != null && !dto.getNewPassword().trim().isEmpty()) {
+            user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+        }
+
+        // 5. Guardar en BD
+        User updatedUser = userRepository.saveAndFlush(user);
+        return mapToDTO(updatedUser);
     }
 
+    /**
+     * Permite al Administrador eliminar a un usuario por su ID.
+     */
+    @Transactional
+    public void deleteUserById(Long id) {
+        if (!userRepository.existsById(id)) {
+            throw new IllegalArgumentException("Usuario no encontrado con ID: " + id);
+        }
+        userRepository.deleteById(id);
+    }
+
+    // ==========================================
+    // MÉTODO AUXILIAR MAPPER
+    // ==========================================
+
+    private UserResponseDTO mapToDTO(User user) {
+        return UserResponseDTO.builder()
+                .id(user.getId())
+                .name(user.getName())
+                .email(user.getEmail())
+                .phone(user.getPhone())
+                .role(user.getRole() != null ? user.getRole() : Role.ROLE_CLIENT)
+                .build();
+    }
 }

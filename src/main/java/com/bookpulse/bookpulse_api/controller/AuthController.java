@@ -1,8 +1,8 @@
 package com.bookpulse.bookpulse_api.controller;
 
-import com.bookpulse.bookpulse_api.dto.AuthResponse;
-import com.bookpulse.bookpulse_api.dto.LoginRequest;
-import com.bookpulse.bookpulse_api.dto.RegisterRequest;
+import com.bookpulse.bookpulse_api.dto.AuthResponseDTO;
+import com.bookpulse.bookpulse_api.dto.LoginRequestDTO;
+import com.bookpulse.bookpulse_api.dto.RegisterRequestDTO;
 import com.bookpulse.bookpulse_api.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,12 +21,12 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request) {
+    public ResponseEntity<AuthResponseDTO> register(@RequestBody RegisterRequestDTO request) {
         return ResponseEntity.ok(authService.register(request));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<AuthResponseDTO> login(@RequestBody LoginRequestDTO request) {
         return ResponseEntity.ok(authService.login(request));
     }
 }

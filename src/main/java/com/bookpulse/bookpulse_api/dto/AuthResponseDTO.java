@@ -1,18 +1,21 @@
 package com.bookpulse.bookpulse_api.dto;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * DTO que captura los datos necesarios para registrar un nuevo usuario.
+ * Respuesta unificada que se devuelve al frontend tras un login o registro exitoso.
  * * @author Cristian
  */
 @Data
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class RegisterRequest {
-    private String name;
+public class AuthResponseDTO {
+    private String token;
     private String email;
-    private String password;
+    private String name;
+    private String role;
 }

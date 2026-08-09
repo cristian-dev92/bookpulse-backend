@@ -1,10 +1,9 @@
 package com.bookpulse.bookpulse_api.service;
 
-import com.bookpulse.bookpulse_api.dto.AuthResponse;
-import com.bookpulse.bookpulse_api.dto.LoginRequest;
-import com.bookpulse.bookpulse_api.dto.RegisterRequest;
+import com.bookpulse.bookpulse_api.dto.AuthResponseDTO;
+import com.bookpulse.bookpulse_api.dto.LoginRequestDTO;
+import com.bookpulse.bookpulse_api.dto.RegisterRequestDTO;
 import com.bookpulse.bookpulse_api.exception.InvalidCredentialsException;
-import com.bookpulse.bookpulse_api.exception.ResourceNotFoundException;
 import com.bookpulse.bookpulse_api.exception.UserAlreadyExistsException;
 import com.bookpulse.bookpulse_api.model.Role;
 import com.bookpulse.bookpulse_api.model.User;
@@ -29,7 +28,7 @@ public class AuthService {
     /**
      * Registra un nuevo cliente en el sistema encriptando su contraseña.
      */
-    public AuthResponse register(RegisterRequest request) {
+    public AuthResponseDTO register(RegisterRequestDTO request) {
         // Verificamos si el email ya existe
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new UserAlreadyExistsException("El correo electrónico ya está registrado");
@@ -45,7 +44,7 @@ public class AuthService {
         userRepository.save(user);
 
         String token = jwtService.generateToken(user);
-        return AuthResponse.builder()
+        return AuthResponseDTO.builder()
                 .token(token)
                 .email(user.getEmail())
                 .name(user.getName())
@@ -56,7 +55,7 @@ public class AuthService {
     /**
      * Autentica a un usuario y le devuelve su token JWT si las credenciales son válidas.
      */
-    public AuthResponse login(LoginRequest request) {
+    public AuthResponseDTO login(LoginRequestDTO request) {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new InvalidCredentialsException("Correo electrónico o contraseña incorrectos"));
 
@@ -66,7 +65,7 @@ public class AuthService {
         }
 
         String token = jwtService.generateToken(user);
-        return AuthResponse.builder()
+        return AuthResponseDTO.builder()
                 .token(token)
                 .email(user.getEmail())
                 .name(user.getName())

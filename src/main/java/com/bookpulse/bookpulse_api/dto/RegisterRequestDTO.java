@@ -5,13 +5,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * DTO que captura las credenciales de acceso de un usuario.
+ * DTO que captura los datos necesarios para registrar un nuevo usuario.
  * * @author Cristian
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class LoginRequest {
+public class RegisterRequestDTO {
+    private String name;
     private String email;
     private String password;
 }

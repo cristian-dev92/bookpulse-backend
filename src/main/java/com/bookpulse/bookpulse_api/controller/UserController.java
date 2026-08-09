@@ -1,8 +1,9 @@
 package com.bookpulse.bookpulse_api.controller;
 
+import com.bookpulse.bookpulse_api.dto.AdminUpdateUserRequestDTO;
 import com.bookpulse.bookpulse_api.dto.ChangePasswordRequestDTO;
 import com.bookpulse.bookpulse_api.dto.UpdateProfileRequestDTO;
-import com.bookpulse.bookpulse_api.dto.UserProfileResponseDTO;
+import com.bookpulse.bookpulse_api.dto.UserResponseDTO;
 import com.bookpulse.bookpulse_api.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -31,22 +32,22 @@ public class UserController {
 
     // GET /api/v1/users/me -> Obtener perfil del usuario autenticado
     @GetMapping("/me")
-    public ResponseEntity<UserProfileResponseDTO> getMyProfile(@AuthenticationPrincipal UserDetails userDetails) {
+    public ResponseEntity<UserResponseDTO> getMyProfile(@AuthenticationPrincipal UserDetails userDetails) {
 
         if (userDetails == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        UserProfileResponseDTO profile = userService.getUserProfile(userDetails.getUsername());
+        UserResponseDTO profile = userService.getUserProfile(userDetails.getUsername());
         return ResponseEntity.ok(profile);
     }
 
     // PUT /api/v1/users/me -> Actualizar datos personales (nombre, teléfono)
     @PutMapping("/me")
-    public ResponseEntity<UserProfileResponseDTO> updateMyProfile(
+    public ResponseEntity<UserResponseDTO> updateMyProfile(
             @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody UpdateProfileRequestDTO dto) {
-        UserProfileResponseDTO updatedProfile = userService.updateProfile(userDetails.getUsername(), dto);
+        UserResponseDTO updatedProfile = userService.updateProfile(userDetails.getUsername(), dto);
         return ResponseEntity.ok(updatedProfile);
     }
 
@@ -62,11 +63,11 @@ public class UserController {
     // PUT /api/v1/users/admin/{id} -> Actualizar datos de cualquier cliente desde el panel admin
     @PutMapping("/admin/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<UserProfileResponseDTO> updateUserByAdmin(
+    public ResponseEntity<UserResponseDTO> updateUserByAdmin(
             @PathVariable Long id,
-            @Valid @RequestBody UpdateProfileRequestDTO dto) {
+            @Valid @RequestBody AdminUpdateUserRequestDTO dto) {
 
-        UserProfileResponseDTO updatedUser = userService.updateUserByAdmin(id, dto);
+        UserResponseDTO updatedUser = userService.adminUpdateUser(id, dto);
         return ResponseEntity.ok(updatedUser);
     }
 
