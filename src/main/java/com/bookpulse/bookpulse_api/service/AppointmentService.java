@@ -4,6 +4,7 @@ import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.AppointmentRepository;
+import com.bookpulse.bookpulse_api.repository.ServiceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,17 +29,20 @@ public class AppointmentService {
 
     private final AppointmentRepository appointmentRepository;
     private final TimeSlotService timeSlotService;
+    private final ServiceRepository serviceRepository;
 
     /**
      * Inyección de dependencias a través del constructor.
      *
      * @param appointmentRepository Repositorio de citas.
      * @param timeSlotService       Servicio de cálculo de franjas horarias.
+     * @param serviceRepository     Repositorio de servicios.
      */
     @Autowired
-    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService) {
+    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService, ServiceRepository serviceRepository) {
         this.appointmentRepository = appointmentRepository;
         this.timeSlotService = timeSlotService;
+        this.serviceRepository = serviceRepository;
     }
 
     /**
@@ -65,7 +69,7 @@ public class AppointmentService {
         // 2. Parámetros de negocio (Hardcodeados provisionalmente para las pruebas)
         LocalTime workStart = LocalTime.of(9, 0);
         LocalTime workEnd = LocalTime.of(18, 0);
-        int durationMinutes = 60;
+        int durationMinutes = 60; // Duración base para la rejilla de slots
 
         // 3. Delegamos el cálculo algorítmico al motor de tiempos
         return timeSlotService.generateAvailableSlots(startOfDay, workStart, workEnd, durationMinutes, existingAppointments);
@@ -78,23 +82,26 @@ public class AppointmentService {
      * (bloqueo optimista) o el hueco ya se ocupó, la base de datos hará un rollback automático.
      * </p>
      *
-     * @param startTime Fecha y hora de inicio deseada por el cliente.
-     * @return La entidad {@link Appointment} guardada en estado pendiente.
-     * @throws IllegalArgumentException Si la hora seleccionada ya se encuentra reservada.
+     * @param startTime Fechay hora de inicio deseada.
+     * @param user      Usuario que realiza la reserva.
+     * @param serviceId ID del servicio a contratar.
+     * @return La entidad {@link Appointment} guardada en estado PENDING.
      */
     @Transactional
-    public Appointment reserveSlot(LocalDateTime startTime, User user) {
-        int durationMinutes = 60; // Debe coincidir con la configuración del cálculo
-        LocalDateTime endTime = startTime.plusMinutes(durationMinutes);
+    public Appointment reserveSlot(LocalDateTime startTime, User user, Long serviceId) {
+        // 1. Obtener el servicio y validar existencia
+        com.bookpulse.bookpulse_api.model.Service service = serviceRepository.findById(serviceId)
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró el servicio con ID: " + serviceId));
 
-        // Validamos en el momento si ya hay alguna cita que se solape en la BD
-        // Esto es una doble seguridad antes de intentar insertar el registro
-        List<Appointment> overlapping = appointmentRepository.findByStartTimeBetween(startTime, endTime);
+        // 2. Calcular fecha fin según la duración real del servicio
+        LocalDateTime endTime = startTime.plusMinutes(service.getDurationMinutes());
 
-        for (Appointment app : overlapping) {
-            if (app.getStatus() != AppointmentStatus.CANCELLED) {
-                throw new IllegalArgumentException("El hueco seleccionado ya no está disponible.");
-            }
+        // 3. Comprobar si hay solapamientos con citas confirmadas o pendientes
+        List<AppointmentStatus> excludedStatuses = List.of(AppointmentStatus.CANCELLED, AppointmentStatus.AVAILABLE);
+        boolean isOverlapping = appointmentRepository.existsOverlappingAppointment(startTime, endTime, excludedStatuses);
+
+        if (isOverlapping) {
+            throw new IllegalArgumentException("El hueco seleccionado ya no está disponible.");
         }
 
         // Creamos la nueva cita en estado PENDING (bloqueo de cortesía de 5 minutos)
@@ -103,6 +110,8 @@ public class AppointmentService {
         newAppointment.setEndTime(endTime);
         newAppointment.setStatus(AppointmentStatus.PENDING);
         newAppointment.setUser(user);
+        newAppointment.setService(service);
+        newAppointment.setPrice(service.getPrice()); // Fijamos el precio actual del servicio
 
         // Al guardar, Hibernate gestiona el campo @Version automáticamente
         return appointmentRepository.save(newAppointment);
@@ -118,6 +127,7 @@ public class AppointmentService {
      */
     @Transactional(readOnly = true)
     public List<Appointment> getAllAppointments() {
+
         return appointmentRepository.findAll();
     }
 
@@ -148,7 +158,10 @@ public class AppointmentService {
         Appointment appointment = appointmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + id));
 
-        int durationMinutes = 60;
+        // Mantener la duración del servicio asociado o 60 min por defecto
+        int durationMinutes = (appointment.getService() != null)
+                ? appointment.getService().getDurationMinutes()
+                : 60;
         LocalDateTime newEndTime = newStartTime.plusMinutes(durationMinutes);
 
         // Verificar solapamientos excluyendo la cita actual
@@ -174,6 +187,7 @@ public class AppointmentService {
 
     @Transactional(readOnly = true)
     public List<Appointment> getAppointmentsByUserId(Long userId) {
+
         return appointmentRepository.findByUserId(userId);
     }
 

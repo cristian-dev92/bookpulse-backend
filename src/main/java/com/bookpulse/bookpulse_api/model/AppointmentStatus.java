@@ -16,6 +16,13 @@ public enum AppointmentStatus {
     /** La cita ha sido confirmada y asociada definitivamente a un cliente. */
     CONFIRMED,
 
+    /** La cita ha sido realizada con éxito. */
+    COMPLETED,
+
     /** La cita ha sido cancelada por el negocio o por el cliente. */
-    CANCELLED
+    CANCELLED,
+
+    /** El cliente no se presentó a la cita. */
+    NO_SHOW
+
 }

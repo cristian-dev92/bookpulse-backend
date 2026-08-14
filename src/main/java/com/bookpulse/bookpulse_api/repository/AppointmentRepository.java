@@ -1,8 +1,12 @@
 package com.bookpulse.bookpulse_api.repository;
 
 import com.bookpulse.bookpulse_api.model.Appointment;
+import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -32,4 +36,19 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
      * @return Una lista de {@link Appointment} pertenecientes al usuario.
      */
     List<Appointment> findByUserId(Long userId);
+
+    /**
+     * Comprueba si existe alguna cita activa que ocupe o se solape con el rango horaria dado.
+     * Ignora las citas que estén canceladas o disponibles.
+     */
+    @Query("""
+        SELECT COUNT(a) > 0 FROM Appointment a\s
+        WHERE a.status NOT IN (:excludedStatuses)
+        AND (a.startTime < :newEndTime AND a.endTime > :newStartTime)
+   \s""")
+    boolean existsOverlappingAppointment(
+            @Param("newStartTime") LocalDateTime newStartTime,
+            @Param("newEndTime") LocalDateTime newEndTime,
+            @Param("excludedStatuses") List<AppointmentStatus> excludedStatuses
+    );
 }

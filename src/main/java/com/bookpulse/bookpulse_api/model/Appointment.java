@@ -6,6 +6,7 @@ import lombok.Setter;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 /**
  * Entidad que representa una cita o reserva en el sistema.
@@ -44,9 +45,23 @@ public class Appointment {
     @Column(name = "status", nullable = false)
     private AppointmentStatus status;
 
-    @ManyToOne
+    /** Cliente que realiza la reserva. */
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
+
+    /** Servicio contratado para esta cita. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "service_id")
+    private Service service;
+
+    /** Precio fijado en el momento de crear la cita. */
+    @Column(precision = 10, scale = 2)
+    private BigDecimal price;
+
+    /** Notas u observaciones adicionales. */
+    @Column(columnDefinition = "TEXT")
+    private String notes;
 
     /**
      * Campo de control de versión para el bloqueo optimista (Optimistic Locking).

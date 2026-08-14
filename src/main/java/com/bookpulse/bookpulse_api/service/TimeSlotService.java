@@ -55,6 +55,7 @@ public class TimeSlotService {
         // Establecemos el punto de inicio combinando el día solicitado con la hora de apertura
         LocalDateTime currentSlot = dateRequested.with(workStart);
         LocalDateTime endOfWork = dateRequested.with(workEnd);
+        LocalDateTime now = LocalDateTime.now();
 
         // Iteramos a lo largo de toda la jornada laboral incrementando por la duración del servicio
         while (currentSlot.plusMinutes(slotDurationMinutes).isBefore(endOfWork) ||
@@ -62,15 +63,18 @@ public class TimeSlotService {
 
             LocalDateTime slotEnd = currentSlot.plusMinutes(slotDurationMinutes);
 
-            // Verificamos si este hueco específico se solapa con alguna cita ya existente
+            // Evitamos ofrecer huecos que ya hayan pasado en el día de hoy
+            if (currentSlot.isBefore(now)) {
+                currentSlot = slotEnd;
+                continue;
+            }
+
             boolean isOccupied = isSlotOverlapping(currentSlot, slotEnd, existingAppointments);
 
-            // Si el hueco está libre, lo añadimos a las opciones que verá el cliente en Angular
             if (!isOccupied) {
                 availableSlots.add(currentSlot);
             }
 
-            // Avanzamos el puntero al siguiente bloque de tiempo
             currentSlot = slotEnd;
         }
 
@@ -88,7 +92,7 @@ public class TimeSlotService {
     private boolean isSlotOverlapping(LocalDateTime slotStart, LocalDateTime slotEnd, List<Appointment> appointments) {
         for (Appointment appointment : appointments) {
             // Ignoramos las citas canceladas a la hora de calcular huecos libres
-            if (appointment.getStatus() == AppointmentStatus.CANCELLED) {
+            if (appointment.getStatus() == AppointmentStatus.CANCELLED || appointment.getStatus() == AppointmentStatus.AVAILABLE) {
                 continue;
             }
 

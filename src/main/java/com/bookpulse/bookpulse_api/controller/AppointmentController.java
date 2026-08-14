@@ -1,9 +1,13 @@
 package com.bookpulse.bookpulse_api.controller;
 
+import com.bookpulse.bookpulse_api.dto.AppointmentCreateDTO;
+import com.bookpulse.bookpulse_api.dto.AppointmentResponseDTO;
+import com.bookpulse.bookpulse_api.mapper.AppointmentMapper;
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.service.AppointmentService;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -28,10 +32,11 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/api/v1/appointments")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:4200"}) // Permite la conexión nativa con Angular
+@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000"}) // Configuración para React (Vite / CRA)
 public class AppointmentController {
 
     private final AppointmentService appointmentService;
+    private final AppointmentMapper appointmentMapper;
 
     /**
      * Inyección de dependencias del servicio de citas.
@@ -39,16 +44,20 @@ public class AppointmentController {
      * @param appointmentService Servicio de lógica de negocio de citas.
      */
     @Autowired
-    public AppointmentController(AppointmentService appointmentService) {
+    public AppointmentController(AppointmentService appointmentService, AppointmentMapper appointmentMapper) {
         this.appointmentService = appointmentService;
+        this.appointmentMapper = appointmentMapper;
     }
 
     // 1. GET /api/v1/appointments -> Devuelve SOLO las citas del usuario con sesión activa
     @GetMapping
-    public ResponseEntity<List<Appointment>> getMyAppointments(@AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<List<AppointmentResponseDTO>> getMyAppointments(@AuthenticationPrincipal User currentUser) {
         // En lugar de getAllAppointments(), llamamos al servicio pasando la ID del usuario logueado
         List<Appointment> appointments = appointmentService.getAppointmentsByUserId(currentUser.getId());
-        return ResponseEntity.ok(appointments);
+        List<AppointmentResponseDTO> dtos = appointments.stream()
+                .map(appointmentMapper::toResponseDTO)
+                .toList();
+        return ResponseEntity.ok(dtos);
     }
 
     /**
@@ -74,50 +83,58 @@ public class AppointmentController {
      * Ejemplo de uso: {@code POST /api/appointments/reserve?startTime=2026-06-15T10:00:00}
      * </p>
      *
-     * @param startTime Fecha y hora exacta del hueco que el cliente desea bloquear.
+     * @param currentUser Usuario autenticado que desea reservar el hueco.
      * @return Una respuesta HTTP 201 CREATED con el objeto {@link Appointment} generado.
      */
-    // 3. POST /api/v1/appointments/reserve?startTime=... -> Reservar
+    // 3. POST /api/v1/appointments/reserve -> Crear/Reservar cita con DTO
     @PostMapping("/reserve")
-    public ResponseEntity<Appointment> reserveSlot(
-            @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+    public ResponseEntity<AppointmentResponseDTO> reserveSlot(
+            @Valid @RequestBody AppointmentCreateDTO dto,
             @AuthenticationPrincipal User currentUser) {
-            // Pasa el usuario autenticado al servicio para vincular la reserva
-        Appointment currentReservation = appointmentService.reserveSlot(startTime, currentUser);
-        return new ResponseEntity<>(currentReservation, HttpStatus.CREATED);
+        // Pasa la fecha de inicio, el usuario autenticado y el ID del servicio
+        Appointment currentReservation = appointmentService.reserveSlot(
+                dto.getStartTime(),
+                currentUser,
+                dto.getServiceId()
+        );
+
+        return new ResponseEntity<>(appointmentMapper.toResponseDTO(currentReservation), HttpStatus.CREATED);
     }
 
     // 4. DELETE /api/v1/appointments/{id} -> Cancelar cita
     @DeleteMapping("/{id}")
-    public ResponseEntity<Appointment> cancelAppointment(@PathVariable Long id) {
+    public ResponseEntity<AppointmentResponseDTO> cancelAppointment(@PathVariable Long id) {
         Appointment cancelledAppointment = appointmentService.cancelAppointment(id);
-        return ResponseEntity.ok(cancelledAppointment);
+        return ResponseEntity.ok(appointmentMapper.toResponseDTO(cancelledAppointment));
     }
 
     // 5. PUT /api/v1/appointments/{id}/reschedule?newStartTime=... -> Reprogramar cita
     @PutMapping("/{id}/reschedule")
-    public ResponseEntity<Appointment> rescheduleAppointment(
+    public ResponseEntity<AppointmentResponseDTO> rescheduleAppointment(
             @PathVariable Long id,
             @RequestParam("newStartTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime newStartTime) {
         Appointment updatedAppointment = appointmentService.rescheduleAppointment(id, newStartTime);
-        return ResponseEntity.ok(updatedAppointment);
+        return ResponseEntity.ok(appointmentMapper.toResponseDTO(updatedAppointment));
     }
 
-    // GET /api/v1/appointments/admin/all -> Listar todas las citas para el Administrador
+    //6. GET /api/v1/appointments/admin/all -> Listar todas las citas para el Administrador
     @GetMapping("/admin/all")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<Appointment>> getAllAppointmentsForAdmin() {
+    public ResponseEntity<List<AppointmentResponseDTO>> getAllAppointmentsForAdmin() {
         List<Appointment> allAppointments = appointmentService.getAllAppointments();
-        return ResponseEntity.ok(allAppointments);
+        List<AppointmentResponseDTO> dtos = allAppointments.stream()
+                .map(appointmentMapper::toResponseDTO)
+                .toList();
+        return ResponseEntity.ok(dtos);
     }
 
-    // PATCH /api/v1/appointments/{id}/status?status=CONFIRMED -> Cambiar estado de la cita
+    //7. PATCH /api/v1/appointments/{id}/status?status=CONFIRMED -> Cambiar estado de la cita
     @PatchMapping("/{id}/status")
-    public ResponseEntity<Appointment> updateAppointmentStatus(
+    public ResponseEntity<AppointmentResponseDTO> updateAppointmentStatus(
             @PathVariable Long id,
             @RequestParam("status") AppointmentStatus status) {
         Appointment updated = appointmentService.updateAppointmentStatus(id, status);
-        return ResponseEntity.ok(updated);
+        return ResponseEntity.ok(appointmentMapper.toResponseDTO(updated));
     }
 
 }
