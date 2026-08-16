@@ -1,6 +1,7 @@
 package com.bookpulse.bookpulse_api.dto;
 
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
+import com.bookpulse.bookpulse_api.model.PaymentStatus;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.NoArgsConstructor;
@@ -27,6 +28,7 @@ public class AppointmentResponseDTO {
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private AppointmentStatus status;
+    private PaymentStatus paymentStatus;
     private BigDecimal price;
     private String notes;
 

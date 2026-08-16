@@ -23,6 +23,7 @@ public class AppointmentMapper {
                 .startTime(appointment.getStartTime())
                 .endTime(appointment.getEndTime())
                 .status(appointment.getStatus())
+                .paymentStatus(appointment.getPaymentStatus())
                 .price(appointment.getPrice())
                 .notes(appointment.getNotes());
 

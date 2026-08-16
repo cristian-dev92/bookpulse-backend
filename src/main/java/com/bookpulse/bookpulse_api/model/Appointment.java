@@ -59,6 +59,11 @@ public class Appointment {
     @Column(precision = 10, scale = 2)
     private BigDecimal price;
 
+    /** Estado del pago asociado a la cita (PENDING o PAID). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_status", length = 20)
+    private PaymentStatus paymentStatus = PaymentStatus.PENDING;
+
     /** Notas u observaciones adicionales. */
     @Column(columnDefinition = "TEXT")
     private String notes;

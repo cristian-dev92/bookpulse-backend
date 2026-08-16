@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 
 import java.time.LocalDateTime;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
 /**
  * DTO para la creación y reserva de una nueva cita.
@@ -24,6 +25,7 @@ public class AppointmentCreateDTO {
     /** Fecha y hora de inicio seleccionada por el usuario. */
     @NotNull(message = "La fecha y hora de inicio es obligatoria")
     @Future(message = "La fecha de reserva debe ser en el futuro")
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime startTime;
 
     /** ID del servicio que se va a contratar. */
@@ -31,7 +33,6 @@ public class AppointmentCreateDTO {
     private Long serviceId;
 
     /** ID del usuario que reserva la cita. */
-    @NotNull(message = "El ID del usuario es obligatorio")
     private Long userId;
 
     /** Notas u observaciones opcionales dejadas por el cliente. */

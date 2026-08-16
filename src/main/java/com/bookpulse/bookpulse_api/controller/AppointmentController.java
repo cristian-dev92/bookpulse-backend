@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -52,6 +53,7 @@ public class AppointmentController {
     // 1. GET /api/v1/appointments -> Devuelve SOLO las citas del usuario con sesión activa
     @GetMapping
     public ResponseEntity<List<AppointmentResponseDTO>> getMyAppointments(@AuthenticationPrincipal User currentUser) {
+        requireAuthenticated(currentUser);
         // En lugar de getAllAppointments(), llamamos al servicio pasando la ID del usuario logueado
         List<Appointment> appointments = appointmentService.getAppointmentsByUserId(currentUser.getId());
         List<AppointmentResponseDTO> dtos = appointments.stream()
@@ -70,7 +72,7 @@ public class AppointmentController {
      * @return Una respuesta HTTP 200 OK con la lista de {@link LocalDateTime} disponibles.
      */
     // 2. GET /api/v1/appointments/available?date=YYYY-MM-DD -> Huecos libres
-    @GetMapping("/available")
+    @GetMapping({"/available", "/available-slots"})
     public ResponseEntity<List<LocalDateTime>> getAvailableSlots(
             @RequestParam("date") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         List<LocalDateTime> availableSlots = appointmentService.getAvailableSlotsForDay(date);
@@ -91,6 +93,7 @@ public class AppointmentController {
     public ResponseEntity<AppointmentResponseDTO> reserveSlot(
             @Valid @RequestBody AppointmentCreateDTO dto,
             @AuthenticationPrincipal User currentUser) {
+        requireAuthenticated(currentUser);
         // Pasa la fecha de inicio, el usuario autenticado y el ID del servicio
         Appointment currentReservation = appointmentService.reserveSlot(
                 dto.getStartTime(),
@@ -103,17 +106,23 @@ public class AppointmentController {
 
     // 4. DELETE /api/v1/appointments/{id} -> Cancelar cita
     @DeleteMapping("/{id}")
-    public ResponseEntity<AppointmentResponseDTO> cancelAppointment(@PathVariable Long id) {
-        Appointment cancelledAppointment = appointmentService.cancelAppointment(id);
+    public ResponseEntity<AppointmentResponseDTO> cancelAppointment(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User currentUser) {
+        requireAuthenticated(currentUser);
+        Appointment cancelledAppointment = appointmentService.cancelAppointment(id, currentUser);
         return ResponseEntity.ok(appointmentMapper.toResponseDTO(cancelledAppointment));
     }
 
-    // 5. PUT /api/v1/appointments/{id}/reschedule?newStartTime=... -> Reprogramar cita
+    // 5. PUT /api/v1/appointments/{id}/reschedule?newStartTime=...&serviceId=... -> Reprogramar cita
     @PutMapping("/{id}/reschedule")
     public ResponseEntity<AppointmentResponseDTO> rescheduleAppointment(
             @PathVariable Long id,
-            @RequestParam("newStartTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime newStartTime) {
-        Appointment updatedAppointment = appointmentService.rescheduleAppointment(id, newStartTime);
+            @RequestParam("newStartTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime newStartTime,
+            @RequestParam(value = "serviceId", required = false) Long serviceId,
+            @AuthenticationPrincipal User currentUser) {
+        requireAuthenticated(currentUser);
+        Appointment updatedAppointment = appointmentService.rescheduleAppointment(id, newStartTime, serviceId, currentUser);
         return ResponseEntity.ok(appointmentMapper.toResponseDTO(updatedAppointment));
     }
 
@@ -132,9 +141,24 @@ public class AppointmentController {
     @PatchMapping("/{id}/status")
     public ResponseEntity<AppointmentResponseDTO> updateAppointmentStatus(
             @PathVariable Long id,
-            @RequestParam("status") AppointmentStatus status) {
-        Appointment updated = appointmentService.updateAppointmentStatus(id, status);
+            @RequestParam("status") AppointmentStatus status,
+            @AuthenticationPrincipal User currentUser) {
+        requireAuthenticated(currentUser);
+        Appointment updated = appointmentService.updateAppointmentStatus(id, status, currentUser);
         return ResponseEntity.ok(appointmentMapper.toResponseDTO(updated));
+    }
+
+    /**
+     * Comprueba que la petición provenga de un usuario autenticado.
+     * Como /api/v1/appointments/** requiere autenticación, esto es una doble
+     * verificación defensiva por si la configuración de seguridad cambiara.
+     *
+     * @param currentUser Principal de seguridad resuelto por Spring Security.
+     */
+    private void requireAuthenticated(User currentUser) {
+        if (currentUser == null) {
+            throw new AccessDeniedException("Debes iniciar sesión para realizar esta operación.");
+        }
     }
 
 }

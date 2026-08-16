@@ -3,6 +3,7 @@ package com.bookpulse.bookpulse_api.repository;
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -51,4 +52,17 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
             @Param("newEndTime") LocalDateTime newEndTime,
             @Param("excludedStatuses") List<AppointmentStatus> excludedStatuses
     );
+
+    /**
+     * Actualiza ÚNICAMENTE la columna {@code status} de la cita.
+     * Usa una sentencia UPDATE directa de JPQL para evitar cualquier cascada o
+     * re-merge de entidades asociadas (User, Service) durante el guardado.
+     *
+     * @param id     Identificador de la cita.
+     * @param status Nuevo estado a aplicar.
+     * @return Número de filas actualizadas.
+     */
+    @Modifying
+    @Query("UPDATE Appointment a SET a.status = :status WHERE a.id = :id")
+    int updateStatusOnly(@Param("id") Long id, @Param("status") AppointmentStatus status);
 }

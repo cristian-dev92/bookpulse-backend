@@ -2,13 +2,17 @@ package com.bookpulse.bookpulse_api.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.dao.DataIntegrityViolationException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import java.time.LocalDateTime;
 
@@ -75,6 +79,78 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Gestiona los cuerpos JSON ilegibles (fechas con formato inválido, JSON malformado).
+     * Evita que un fallo de deserialización se convierta en un 500 genérico.
+     *
+     * @param ex      La excepción de deserialización capturada.
+     * @param request El contexto de la petición web actual.
+     * @return Un {@link ResponseEntity} con estado 400 Bad Request.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleUnreadableMessage(
+            HttpMessageNotReadableException ex, WebRequest request) {
+
+        ErrorResponse error = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                "Formato de fecha u hora inválido. Asegúrate de enviar startTime como yyyy-MM-dd'T'HH:mm:ss.",
+                request.getDescription(false).replace("uri=", "")
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Gestiona los fallos de validación {@code @Valid} de los DTOs.
+     * Devuelve 400 con el detalle de cada campo que no cumplió las restricciones.
+     *
+     * @param ex      La excepción de validación capturada.
+     * @param request El contexto de la petición web actual.
+     * @return Un {@link ResponseEntity} con estado 400 Bad Request.
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> handleValidation(
+            MethodArgumentNotValidException ex, WebRequest request) {
+
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+
+        ErrorResponse error = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                message,
+                request.getDescription(false).replace("uri=", "")
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Gestiona los intentos de acceso a citas o recursos ajenos al usuario logueado.
+     *
+     * @param ex      La excepción de acceso denegado capturada.
+     * @param request El contexto de la petición web actual.
+     * @return Un {@link ResponseEntity} con estado 403 Forbidden.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(
+            AccessDeniedException ex, WebRequest request) {
+
+        ErrorResponse error = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.FORBIDDEN.value(),
+                HttpStatus.FORBIDDEN.getReasonPhrase(),
+                "No tienes permisos para realizar esta operación.",
+                request.getDescription(false).replace("uri=", "")
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.FORBIDDEN);
+    }
+
+    /**
      * Interceptor genérico para cualquier error inesperado del servidor (Errores 500).
      * Evita que se filtren datos internos del backend por seguridad.
      *
@@ -101,8 +177,20 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
         Map<String, String> errorResponse = new HashMap<>();
 
-        // Mensaje limpio para el usuario
-        errorResponse.put("message", "El nombre de usuario o email ya se encuentra registrado.");
+        // Registramos la causa raíz real en el log del servidor
+        System.err.println("[DataIntegrityViolation] " + (ex.getMostSpecificCause() != null
+                ? ex.getMostSpecificCause().getMessage() : ex.getMessage()));
+
+        String detail = (ex.getMostSpecificCause() != null)
+                ? ex.getMostSpecificCause().getMessage()
+                : ex.getMessage();
+
+        // Si la restricción involucra la tabla de usuarios, seguimos dando el mensaje amigable de registro.
+        // Para el resto de violaciones (p. ej. citas), mostramos la restricción real para facilitar el debug.
+        boolean isUserUnique = detail != null && detail.toLowerCase().contains("users");
+        errorResponse.put("message", isUserUnique
+                ? "El nombre de usuario o email ya se encuentra registrado."
+                : "La operación no se pudo completar por una restricción de datos: " + detail);
 
         return ResponseEntity.status(HttpStatus.CONFLICT).body(errorResponse); // 409 Conflict
     }

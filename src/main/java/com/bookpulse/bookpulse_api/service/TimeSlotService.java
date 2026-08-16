@@ -4,6 +4,7 @@ import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -40,27 +41,25 @@ public class TimeSlotService {
      * @throws IllegalArgumentException Si los parámetros de tiempo son incoherentes (ej: fin antes del inicio).
      */
     public List<LocalDateTime> generateAvailableSlots(
-            LocalDateTime dateRequested,
+            LocalDate dateRequested,
             LocalTime workStart,
             LocalTime workEnd,
             int slotDurationMinutes,
             List<Appointment> existingAppointments) {
 
-        if (workStart.isAfter(workEnd) || slotDurationMinutes <= 0) {
+        if (workStart.isAfter(workEnd) || workStart.equals(workEnd) || slotDurationMinutes <= 0) {
             throw new IllegalArgumentException("La configuración horaria o la duración del slot no son válidas.");
         }
 
         List<LocalDateTime> availableSlots = new ArrayList<>();
 
-        // Establecemos el punto de inicio combinando el día solicitado con la hora de apertura
-        LocalDateTime currentSlot = dateRequested.with(workStart);
-        LocalDateTime endOfWork = dateRequested.with(workEnd);
+        // Combinar fecha con hora de inicio y fin correctamente
+        LocalDateTime currentSlot = dateRequested.atTime(workStart);
+        LocalDateTime endOfWork = dateRequested.atTime(workEnd);
         LocalDateTime now = LocalDateTime.now();
 
         // Iteramos a lo largo de toda la jornada laboral incrementando por la duración del servicio
-        while (currentSlot.plusMinutes(slotDurationMinutes).isBefore(endOfWork) ||
-                currentSlot.plusMinutes(slotDurationMinutes).isEqual(endOfWork)) {
-
+        while (!currentSlot.plusMinutes(slotDurationMinutes).isAfter(endOfWork)) {
             LocalDateTime slotEnd = currentSlot.plusMinutes(slotDurationMinutes);
 
             // Evitamos ofrecer huecos que ya hayan pasado en el día de hoy

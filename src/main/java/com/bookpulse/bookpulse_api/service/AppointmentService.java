@@ -2,10 +2,13 @@ package com.bookpulse.bookpulse_api.service;
 
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
+import com.bookpulse.bookpulse_api.model.PaymentStatus;
+import com.bookpulse.bookpulse_api.model.Role;
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.AppointmentRepository;
 import com.bookpulse.bookpulse_api.repository.ServiceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +33,7 @@ public class AppointmentService {
     private final AppointmentRepository appointmentRepository;
     private final TimeSlotService timeSlotService;
     private final ServiceRepository serviceRepository;
+    private final EmailService emailService;
 
     /**
      * Inyección de dependencias a través del constructor.
@@ -37,12 +41,14 @@ public class AppointmentService {
      * @param appointmentRepository Repositorio de citas.
      * @param timeSlotService       Servicio de cálculo de franjas horarias.
      * @param serviceRepository     Repositorio de servicios.
+     * @param emailService          Servicio de notificaciones por correo.
      */
     @Autowired
-    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService, ServiceRepository serviceRepository) {
+    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService, ServiceRepository serviceRepository, EmailService emailService) {
         this.appointmentRepository = appointmentRepository;
         this.timeSlotService = timeSlotService;
         this.serviceRepository = serviceRepository;
+        this.emailService = emailService;
     }
 
     /**
@@ -72,7 +78,7 @@ public class AppointmentService {
         int durationMinutes = 60; // Duración base para la rejilla de slots
 
         // 3. Delegamos el cálculo algorítmico al motor de tiempos
-        return timeSlotService.generateAvailableSlots(startOfDay, workStart, workEnd, durationMinutes, existingAppointments);
+        return timeSlotService.generateAvailableSlots(date, workStart, workEnd, durationMinutes, existingAppointments);
     }
 
     /**
@@ -89,6 +95,9 @@ public class AppointmentService {
      */
     @Transactional
     public Appointment reserveSlot(LocalDateTime startTime, User user, Long serviceId) {
+        if (startTime.isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("No se pueden reservar citas en el pasado.");
+        }
         // 1. Obtener el servicio y validar existencia
         com.bookpulse.bookpulse_api.model.Service service = serviceRepository.findById(serviceId)
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró el servicio con ID: " + serviceId));
@@ -109,12 +118,18 @@ public class AppointmentService {
         newAppointment.setStartTime(startTime);
         newAppointment.setEndTime(endTime);
         newAppointment.setStatus(AppointmentStatus.PENDING);
+        newAppointment.setPaymentStatus(PaymentStatus.PENDING);
         newAppointment.setUser(user);
         newAppointment.setService(service);
         newAppointment.setPrice(service.getPrice()); // Fijamos el precio actual del servicio
 
         // Al guardar, Hibernate gestiona el campo @Version automáticamente
-        return appointmentRepository.save(newAppointment);
+        Appointment saved = appointmentRepository.save(newAppointment);
+
+        // Notificación por email con el resumen de la cita
+        emailService.sendAppointmentConfirmation(saved);
+
+        return saved;
     }
 
     /**
@@ -133,30 +148,68 @@ public class AppointmentService {
 
     /**
      * Cancela una cita cambiando su estado a CANCELLED.
+     * Solo el propietario de la cita o un administrador pueden cancelarla, y únicamente
+     * cuando la cita está en estado PENDING o CONFIRMED.
      *
-     * @param id Identificador de la cita a cancelar.
+     * @param id          Identificador de la cita a cancelar.
+     * @param currentUser Usuario autenticado que realiza la petición.
      * @return La entidad {@link Appointment} actualizada.
      */
     @Transactional
-    public Appointment cancelAppointment(Long id) {
+    public Appointment cancelAppointment(Long id, User currentUser) {
         Appointment appointment = appointmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + id));
+
+        checkOwnershipOrAdmin(appointment, currentUser, "cancelar esta cita");
+
+        AppointmentStatus status = appointment.getStatus();
+        if (status == AppointmentStatus.COMPLETED
+                || status == AppointmentStatus.CANCELLED
+                || status == AppointmentStatus.NO_SHOW) {
+            throw new IllegalArgumentException(
+                    "No se puede cancelar una cita en estado " + status + ".");
+        }
 
         appointment.setStatus(AppointmentStatus.CANCELLED);
         return appointmentRepository.save(appointment);
     }
 
     /**
-     * Reprograma una cita cambiando su fecha y hora de inicio.
+     * Reprograma una cita cambiando su fecha y hora de inicio y, opcionalmente, el servicio.
+     * Solo el propietario de la cita o un administrador pueden reprogramarla.
+     * Regla de negocio: únicamente las citas en estado PENDING pueden reprogramarse;
+     * las confirmadas deben cancelarse primero o contactar con administración.
      *
      * @param id           Identificador de la cita.
      * @param newStartTime Nueva fecha y hora de inicio.
+     * @param serviceId    Nuevo servicio a aplicar (opcional; si es null se mantiene el actual).
+     * @param currentUser  Usuario autenticado que realiza la petición.
      * @return La entidad {@link Appointment} actualizada.
      */
     @Transactional
-    public Appointment rescheduleAppointment(Long id, LocalDateTime newStartTime) {
+    public Appointment rescheduleAppointment(Long id, LocalDateTime newStartTime, Long serviceId, User currentUser) {
         Appointment appointment = appointmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + id));
+
+        checkOwnershipOrAdmin(appointment, currentUser, "reprogramar esta cita");
+
+        if (appointment.getStatus() != AppointmentStatus.PENDING) {
+            throw new IllegalArgumentException(
+                    "Esta cita está en estado " + appointment.getStatus()
+                            + " y no puede reprogramarse. Las citas confirmadas deben cancelarse o contactar con administración.");
+        }
+
+        if (newStartTime.isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("No se pueden programar citas en el pasado.");
+        }
+
+        // Cambio de servicio opcional: recalcula duración y precio
+        if (serviceId != null) {
+            com.bookpulse.bookpulse_api.model.Service service = serviceRepository.findById(serviceId)
+                    .orElseThrow(() -> new IllegalArgumentException("No se encontró el servicio con ID: " + serviceId));
+            appointment.setService(service);
+            appointment.setPrice(service.getPrice());
+        }
 
         // Mantener la duración del servicio asociado o 60 min por defecto
         int durationMinutes = (appointment.getService() != null)
@@ -178,17 +231,47 @@ public class AppointmentService {
     }
 
     @Transactional
-    public Appointment updateAppointmentStatus(Long id, AppointmentStatus status) {
+    public Appointment updateAppointmentStatus(Long id, AppointmentStatus status, User currentUser) {
         Appointment appointment = appointmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
+
+        checkOwnershipOrAdmin(appointment, currentUser, "cambiar el estado de esta cita");
+
+        // UPDATE directo sobre la columna status (sin tocar User, Service ni cascadas)
+        appointmentRepository.updateStatusOnly(id, status);
         appointment.setStatus(status);
-        return appointmentRepository.save(appointment);
+
+        // Si la cita pasa a CONFIRMED, enviamos el correo de confirmación
+        if (status == AppointmentStatus.CONFIRMED) {
+            emailService.sendAppointmentConfirmation(appointment);
+        }
+
+        return appointment;
     }
 
     @Transactional(readOnly = true)
     public List<Appointment> getAppointmentsByUserId(Long userId) {
 
         return appointmentRepository.findByUserId(userId);
+    }
+
+    /**
+     * Comprueba que el usuario autenticado sea el propietario de la cita o un administrador.
+     * Si no cumple ninguna de las dos condiciones, lanza {@link AccessDeniedException}.
+     *
+     * @param appointment La cita sobre la que se quiere actuar.
+     * @param currentUser El usuario autenticado que realiza la petición.
+     * @param action      Descripción de la operación que se intenta realizar.
+     */
+    private void checkOwnershipOrAdmin(Appointment appointment, User currentUser, String action) {
+        boolean isAdmin = currentUser != null && currentUser.getRole() == Role.ROLE_ADMIN;
+        boolean isOwner = currentUser != null
+                && appointment.getUser() != null
+                && appointment.getUser().getId().equals(currentUser.getId());
+
+        if (!isAdmin && !isOwner) {
+            throw new AccessDeniedException("No tienes permisos para " + action);
+        }
     }
 
 }
