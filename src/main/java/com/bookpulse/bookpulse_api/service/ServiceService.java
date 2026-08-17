@@ -2,6 +2,7 @@ package com.bookpulse.bookpulse_api.service;
 
 import com.bookpulse.bookpulse_api.dto.ServiceDTO;
 import com.bookpulse.bookpulse_api.model.Service;
+import com.bookpulse.bookpulse_api.repository.AppointmentRepository;
 import com.bookpulse.bookpulse_api.repository.ServiceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,10 +13,12 @@ import java.util.List;
 public class ServiceService {
 
     private final ServiceRepository serviceRepository;
+    private final AppointmentRepository appointmentRepository;
 
     @Autowired
-    public ServiceService(ServiceRepository serviceRepository) {
+    public ServiceService(ServiceRepository serviceRepository, AppointmentRepository appointmentRepository) {
         this.serviceRepository = serviceRepository;
+        this.appointmentRepository = appointmentRepository;
     }
 
     @Transactional(readOnly = true)
@@ -68,5 +71,30 @@ public class ServiceService {
         // Borrado lógico para mantener la integridad con citas pasadas
         service.setActive(false);
         serviceRepository.save(service);
+    }
+
+    /**
+     * Elimina físicamente (borrado definitivo) un servicio del catálogo.
+     * <p>
+     * Si el servicio ya tiene citas asociadas en la BD, se lanza
+     * {@link IllegalStateException} para evitar violaciones de integridad referencial;
+     * en ese caso el administrador debe usar el borrado lógico (desactivar).
+     * </p>
+     *
+     * @param id Identificador del servicio.
+     * @throws IllegalStateException si el servicio tiene citas asociadas.
+     */
+    @Transactional
+    public void deleteServicePermanently(Long id) {
+        Service service = getServiceById(id);
+
+        long appointmentCount = appointmentRepository.countByServiceId(id);
+        if (appointmentCount > 0) {
+            throw new IllegalStateException(
+                    "No se puede eliminar el servicio \"" + service.getName() + "\" porque tiene "
+                            + appointmentCount + " cita(s) asociada(s). Desactívalo en su lugar.");
+        }
+
+        serviceRepository.delete(service);
     }
 }

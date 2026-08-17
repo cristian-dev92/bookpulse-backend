@@ -80,11 +80,12 @@ public class ServiceController {
         return ResponseEntity.ok(serviceMapper.toResponseDTO(updated));
     }
 
-    // 6. DELETE /api/v1/services/{id} -> Desactivar servicio (borrado lógico, solo ADMIN)
+    // 6. DELETE /api/v1/services/{id} -> Borrado definitivo de un servicio (solo ADMIN).
+    //    Si el servicio tiene citas asociadas se responde con 409 y un mensaje explicativo.
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> disableService(@PathVariable Long id) {
-        serviceService.deleteOrDisableService(id);
+    public ResponseEntity<Void> deleteService(@PathVariable Long id) {
+        serviceService.deleteServicePermanently(id);
         return ResponseEntity.noContent().build();
     }
 }

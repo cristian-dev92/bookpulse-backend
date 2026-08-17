@@ -1,6 +1,7 @@
 package com.bookpulse.bookpulse_api.controller;
 
 import com.bookpulse.bookpulse_api.dto.AppointmentCreateDTO;
+import com.bookpulse.bookpulse_api.dto.AppointmentRescheduleDTO;
 import com.bookpulse.bookpulse_api.dto.AppointmentResponseDTO;
 import com.bookpulse.bookpulse_api.mapper.AppointmentMapper;
 import com.bookpulse.bookpulse_api.model.Appointment;
@@ -9,6 +10,9 @@ import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.service.AppointmentService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -50,15 +54,19 @@ public class AppointmentController {
         this.appointmentMapper = appointmentMapper;
     }
 
-    // 1. GET /api/v1/appointments -> Devuelve SOLO las citas del usuario con sesión activa
-    @GetMapping
-    public ResponseEntity<List<AppointmentResponseDTO>> getMyAppointments(@AuthenticationPrincipal User currentUser) {
+    // 1. GET /api/v1/appointments/my-appointments?page=0&size=5&statuses=PENDING,CONFIRMED -> Citas del usuario (paginadas)
+    @GetMapping("/my-appointments")
+    public ResponseEntity<Page<AppointmentResponseDTO>> getMyAppointments(
+            @AuthenticationPrincipal User currentUser,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "5") int size,
+            @RequestParam(value = "statuses", required = false) List<AppointmentStatus> statuses) {
         requireAuthenticated(currentUser);
-        // En lugar de getAllAppointments(), llamamos al servicio pasando la ID del usuario logueado
-        List<Appointment> appointments = appointmentService.getAppointmentsByUserId(currentUser.getId());
-        List<AppointmentResponseDTO> dtos = appointments.stream()
-                .map(appointmentMapper::toResponseDTO)
-                .toList();
+        Page<Appointment> appointments = appointmentService.getMyAppointments(
+                currentUser.getId(),
+                statuses,
+                PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startTime")));
+        Page<AppointmentResponseDTO> dtos = appointments.map(appointmentMapper::toResponseDTO);
         return ResponseEntity.ok(dtos);
     }
 
@@ -68,14 +76,17 @@ public class AppointmentController {
      * Ejemplo de uso: {@code GET /api/v1/appointments/available?date=2026-06-15}
      * </p>
      *
-     * @param date Fecha a consultar en formato ISO (yyyy-MM-dd).
+     * @param date                Fecha a consultar en formato ISO (yyyy-MM-dd).
+     * @param excludeAppointmentId Si se está reprogramando una cita, su ID para que su hora
+     *                             actual no se considere ocupada (opcional).
      * @return Una respuesta HTTP 200 OK con la lista de {@link LocalDateTime} disponibles.
      */
     // 2. GET /api/v1/appointments/available?date=YYYY-MM-DD -> Huecos libres
     @GetMapping({"/available", "/available-slots"})
     public ResponseEntity<List<LocalDateTime>> getAvailableSlots(
-            @RequestParam("date") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        List<LocalDateTime> availableSlots = appointmentService.getAvailableSlotsForDay(date);
+            @RequestParam("date") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(value = "excludeAppointmentId", required = false) Long excludeAppointmentId) {
+        List<LocalDateTime> availableSlots = appointmentService.getAvailableSlotsForDay(date, excludeAppointmentId);
         return ResponseEntity.ok(availableSlots);
     }
 
@@ -114,24 +125,39 @@ public class AppointmentController {
         return ResponseEntity.ok(appointmentMapper.toResponseDTO(cancelledAppointment));
     }
 
-    // 5. PUT /api/v1/appointments/{id}/reschedule?newStartTime=...&serviceId=... -> Reprogramar cita
+    // 5. PUT /api/v1/appointments/{id}/reschedule -> Reprogramar cita (JSON: newDateTime + serviceId opcional)
     @PutMapping("/{id}/reschedule")
     public ResponseEntity<AppointmentResponseDTO> rescheduleAppointment(
             @PathVariable Long id,
-            @RequestParam("newStartTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime newStartTime,
-            @RequestParam(value = "serviceId", required = false) Long serviceId,
+            @Valid @RequestBody AppointmentRescheduleDTO dto,
             @AuthenticationPrincipal User currentUser) {
         requireAuthenticated(currentUser);
-        Appointment updatedAppointment = appointmentService.rescheduleAppointment(id, newStartTime, serviceId, currentUser);
+        Appointment updatedAppointment = appointmentService.rescheduleAppointment(id, dto, currentUser);
         return ResponseEntity.ok(appointmentMapper.toResponseDTO(updatedAppointment));
     }
 
-    //6. GET /api/v1/appointments/admin/all -> Listar todas las citas para el Administrador
+    //6. GET /api/v1/appointments/admin/all?page=0&size=8&status=CONFIRMED -> Listar citas (Admin, paginado)
     @GetMapping("/admin/all")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<AppointmentResponseDTO>> getAllAppointmentsForAdmin() {
-        List<Appointment> allAppointments = appointmentService.getAllAppointments();
-        List<AppointmentResponseDTO> dtos = allAppointments.stream()
+    public ResponseEntity<Page<AppointmentResponseDTO>> getAllAppointmentsForAdmin(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "8") int size,
+            @RequestParam(value = "status", required = false) AppointmentStatus status) {
+        Page<Appointment> allAppointments = appointmentService.getAllAppointments(
+                status,
+                PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startTime")));
+        Page<AppointmentResponseDTO> dtos = allAppointments.map(appointmentMapper::toResponseDTO);
+        return ResponseEntity.ok(dtos);
+    }
+
+    //6bis. GET /api/v1/appointments/admin/calendar?from=...&to=... -> Citas de un rango para el calendario (Admin)
+    @GetMapping("/admin/calendar")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<List<AppointmentResponseDTO>> getCalendarAppointments(
+            @RequestParam("from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam("to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
+        List<Appointment> appointments = appointmentService.getAppointmentsBetween(from, to);
+        List<AppointmentResponseDTO> dtos = appointments.stream()
                 .map(appointmentMapper::toResponseDTO)
                 .toList();
         return ResponseEntity.ok(dtos);

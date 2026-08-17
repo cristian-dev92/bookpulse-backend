@@ -6,10 +6,12 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.web.server.ResponseStatusException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -148,6 +150,79 @@ public class GlobalExceptionHandler {
         );
 
         return new ResponseEntity<>(error, HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * Gestiona las excepciones de estado de negocio (p. ej. un servicio que no se puede
+     * eliminar por tener citas asociadas). Devuelve 409 Conflict con el mensaje claro.
+     *
+     * @param ex      La excepción de estado ilegal capturada.
+     * @param request El contexto de la petición web actual.
+     * @return Un {@link ResponseEntity} con estado 409 Conflict.
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalState(
+            IllegalStateException ex, WebRequest request) {
+
+        ErrorResponse error = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.CONFLICT.value(),
+                HttpStatus.CONFLICT.getReasonPhrase(),
+                ex.getMessage(),
+                request.getDescription(false).replace("uri=", "")
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    /**
+     * Gestiona los fallos de conversión de parámetros (p. ej. un estado inválido
+     * como {@code status=FOO} o una página no numérica). Devuelve 400 en lugar de un 500.
+     *
+     * @param ex      La excepción de tipo de argumento capturada.
+     * @param request El contexto de la petición web actual.
+     * @return Un {@link ResponseEntity} con estado 400 Bad Request.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(
+            MethodArgumentTypeMismatchException ex, WebRequest request) {
+
+        ErrorResponse error = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                "Valor inválido para el parámetro '" + ex.getName() + "': " + ex.getValue(),
+                request.getDescription(false).replace("uri=", "")
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Gestiona las excepciones de negocio lanzadas con {@link org.springframework.web.server.ResponseStatusException}.
+     * <p>
+     * Sin este handler, el catch-all genérico ({@code @ExceptionHandler(Exception.class)}) interceptaría
+     * la excepción y devolvería un 500 genérico en lugar del código HTTP y mensaje previstos.
+     * </p>
+     *
+     * @param ex      La excepción con el estado HTTP deseado.
+     * @param request El contexto de la petición web actual.
+     * @return Un {@link ResponseEntity} con el estado HTTP y el mensaje indicados.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ErrorResponse> handleResponseStatus(
+            ResponseStatusException ex, WebRequest request) {
+
+        int status = ex.getStatusCode().value();
+        ErrorResponse error = new ErrorResponse(
+                LocalDateTime.now(),
+                status,
+                ex.getStatusCode().toString(),
+                ex.getReason() != null ? ex.getReason() : "Solicitud incorrecta",
+                request.getDescription(false).replace("uri=", "")
+        );
+
+        return new ResponseEntity<>(error, ex.getStatusCode());
     }
 
     /**

@@ -4,9 +4,11 @@ import com.bookpulse.bookpulse_api.dto.*;
 import com.bookpulse.bookpulse_api.model.Role; // Asegúrate de importar tu Enum/Clase Role si existe
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.UserRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -14,12 +16,24 @@ import java.util.stream.Collectors;
 @Service
 public class UserService {
 
+    /**
+     * Emails de las cuentas Demo públicas. Están protegidas a nivel de API contra
+     * borrado, desactivación y cambios de credenciales/rol para que el acceso
+     * público de la Demo nunca se rompa.
+     */
+    private static final List<String> DEMO_EMAILS = List.of("admin@demo.com", "user@demo.com");
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
     public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+    }
+
+    /** Comprueba si el usuario es una cuenta Demo protegida. */
+    private boolean isDemoUser(User user) {
+        return user.getEmail() != null && DEMO_EMAILS.contains(user.getEmail().toLowerCase());
     }
 
     // ==========================================
@@ -59,6 +73,13 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado"));
 
+        // Las cuentas Demo no pueden cambiar su contraseña
+        if (isDemoUser(user)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Las cuentas Demo están protegidas: no se puede cambiar su contraseña para mantener el acceso público activo");
+        }
+
         if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
             throw new IllegalArgumentException("La contraseña actual es incorrecta");
         }
@@ -88,6 +109,13 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado con ID: " + id));
 
+        // Las cuentas Demo no pueden cambiar de rol
+        if (isDemoUser(user)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Las cuentas Demo están protegidas: no se puede cambiar su rol");
+        }
+
         try {
             // Si tu entidad usa Enum Role, descomenta la siguiente línea:
             user.setRole(Role.valueOf(newRoleStr.toUpperCase()));
@@ -109,6 +137,32 @@ public class UserService {
     public UserResponseDTO adminUpdateUser(Long id, AdminUpdateUserRequestDTO dto) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado con ID: " + id));
+
+        boolean demo = isDemoUser(user);
+
+        // 0. Blindaje cuentas Demo: no se pueden desactivar, ni cambiar email, rol o contraseña
+        if (demo) {
+            if (dto.getActive() != null && !dto.getActive()) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Las cuentas Demo están protegidas: no se pueden desactivar para mantener el acceso público activo");
+            }
+            if (dto.getRole() != null && user.getRole() != null && !dto.getRole().equalsIgnoreCase(user.getRole().name())) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Las cuentas Demo están protegidas: no se puede cambiar su rol");
+            }
+            if (dto.getEmail() != null && !dto.getEmail().equalsIgnoreCase(user.getEmail())) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Las cuentas Demo están protegidas: no se puede cambiar su email");
+            }
+            if (dto.getNewPassword() != null && !dto.getNewPassword().trim().isEmpty()) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Las cuentas Demo están protegidas: no se puede cambiar su contraseña");
+            }
+        }
 
         // 1. Validar y actualizar email
         if (dto.getEmail() != null && !dto.getEmail().equalsIgnoreCase(user.getEmail())) {
@@ -145,12 +199,21 @@ public class UserService {
 
     /**
      * Permite al Administrador eliminar a un usuario por su ID.
+     * <p>
+     * Las cuentas Demo están protegidas contra eliminación.
+     * </p>
      */
     @Transactional
     public void deleteUserById(Long id) {
-        if (!userRepository.existsById(id)) {
-            throw new IllegalArgumentException("Usuario no encontrado con ID: " + id);
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado con ID: " + id));
+
+        if (isDemoUser(user)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Las cuentas Demo están protegidas contra eliminación");
         }
+
         userRepository.deleteById(id);
     }
 

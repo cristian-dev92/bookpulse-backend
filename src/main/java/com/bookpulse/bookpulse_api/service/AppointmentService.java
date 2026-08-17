@@ -1,5 +1,6 @@
 package com.bookpulse.bookpulse_api.service;
 
+import com.bookpulse.bookpulse_api.dto.AppointmentRescheduleDTO;
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import com.bookpulse.bookpulse_api.model.PaymentStatus;
@@ -8,6 +9,8 @@ import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.AppointmentRepository;
 import com.bookpulse.bookpulse_api.repository.ServiceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,11 +62,13 @@ public class AppointmentService {
      * y le pide al motor de tiempos que calcule los huecos disponibles.
      * </p>
      *
-     * @param date El día que se desea consultar.
-     * @return Una lista de {@link LocalDateTime} con los inicios de cada turno libre.
+     * @param date                El día que se desea consultar.
+     * @param excludeAppointmentId Si se está reprogramando una cita, su ID no se computa
+     *                             como conflicto para que su hora actual aparezca disponible (opcional).
+     * @return Una lista ordenada de {@link LocalDateTime} con los inicios de cada turno libre.
      */
     @Transactional(readOnly = true)
-    public List<LocalDateTime> getAvailableSlotsForDay(LocalDate date) {
+    public List<LocalDateTime> getAvailableSlotsForDay(LocalDate date, Long excludeAppointmentId) {
         // Definimos el rango del día completo (desde las 00:00:00 hasta las 23:59:59)
         LocalDateTime startOfDay = date.atStartOfDay();
         LocalDateTime endOfDay = date.atTime(LocalTime.MAX);
@@ -72,13 +77,23 @@ public class AppointmentService {
         // 1. Recuperamos las citas que ya existan ese día en la BD
         List<Appointment> existingAppointments = appointmentRepository.findByStartTimeBetween(startOfDay, endOfDay);
 
-        // 2. Parámetros de negocio (Hardcodeados provisionalmente para las pruebas)
+        // 2. Si se indica una cita en concreto (reprogramación), no se considera conflicto
+        if (excludeAppointmentId != null) {
+            existingAppointments = existingAppointments.stream()
+                    .filter(a -> !a.getId().equals(excludeAppointmentId))
+                    .toList();
+        }
+
+        // 3. Parámetros de negocio (Hardcodeados provisionalmente para las pruebas)
         LocalTime workStart = LocalTime.of(9, 0);
         LocalTime workEnd = LocalTime.of(18, 0);
         int durationMinutes = 60; // Duración base para la rejilla de slots
 
-        // 3. Delegamos el cálculo algorítmico al motor de tiempos
-        return timeSlotService.generateAvailableSlots(date, workStart, workEnd, durationMinutes, existingAppointments);
+        // 4. Delegamos el cálculo algorítmico al motor de tiempos y garantizamos orden cronológico
+        return timeSlotService.generateAvailableSlots(date, workStart, workEnd, durationMinutes, existingAppointments)
+                .stream()
+                .sorted()
+                .toList();
     }
 
     /**
@@ -133,17 +148,44 @@ public class AppointmentService {
     }
 
     /**
-     * Recupera la lista completa de todas las citas registradas en el sistema.
-     * <p>
-     * Se marca como {@code readOnly = true} para optimizar el rendimiento de la transacción en PostgreSQL.
-     * </p>
+     * Recupera de forma paginada todas las citas del sistema (Admin).
+     * Opcionalmente filtra por un estado concreto.
      *
-     * @return Una lista con todas las entidades {@link Appointment}.
+     * @param status   Estado por el que filtrar (opcional, null = todas).
+     * @param pageable Paginación y orden.
+     * @return Una página con todas las entidades {@link Appointment}.
      */
     @Transactional(readOnly = true)
-    public List<Appointment> getAllAppointments() {
+    public Page<Appointment> getAllAppointments(AppointmentStatus status, Pageable pageable) {
+        if (status == null) {
+            return appointmentRepository.findAll(pageable);
+        }
+        return appointmentRepository.findByStatus(status, pageable);
+    }
 
-        return appointmentRepository.findAll();
+    /**
+     * Recupera las citas activas dentro de un rango de fechas (Admin).
+     * Útil para alimentar el calendario global del panel de administración.
+     * <p>
+     * Solo se devuelven citas en estado PENDING, CONFIRMED o COMPLETED:
+     * las canceladas o no presentadas no ocupan hueco y no deben aparecer como
+     * "fantasmas" en el calendario.
+     * </p>
+     *
+     * @param from Inicio del rango (inclusive).
+     * @param to   Fin del rango (inclusive).
+     * @return Una lista de {@link Appointment} activas dentro del rango.
+     */
+    @Transactional(readOnly = true)
+    public List<Appointment> getAppointmentsBetween(LocalDateTime from, LocalDateTime to) {
+        List<AppointmentStatus> activeStatuses = List.of(
+                AppointmentStatus.PENDING,
+                AppointmentStatus.CONFIRMED,
+                AppointmentStatus.COMPLETED
+        );
+        return appointmentRepository.findByStartTimeBetween(from, to).stream()
+                .filter(a -> activeStatuses.contains(a.getStatus()))
+                .toList();
     }
 
     /**
@@ -180,33 +222,37 @@ public class AppointmentService {
      * Regla de negocio: únicamente las citas en estado PENDING pueden reprogramarse;
      * las confirmadas deben cancelarse primero o contactar con administración.
      *
-     * @param id           Identificador de la cita.
-     * @param newStartTime Nueva fecha y hora de inicio.
-     * @param serviceId    Nuevo servicio a aplicar (opcional; si es null se mantiene el actual).
-     * @param currentUser  Usuario autenticado que realiza la petición.
+     * @param id          Identificador de la cita.
+     * @param dto         DTO con la nueva fecha/hora y el servicio opcional.
+     * @param currentUser Usuario autenticado que realiza la petición.
      * @return La entidad {@link Appointment} actualizada.
      */
     @Transactional
-    public Appointment rescheduleAppointment(Long id, LocalDateTime newStartTime, Long serviceId, User currentUser) {
+    public Appointment rescheduleAppointment(Long id, AppointmentRescheduleDTO dto, User currentUser) {
         Appointment appointment = appointmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + id));
 
         checkOwnershipOrAdmin(appointment, currentUser, "reprogramar esta cita");
 
+        // Regla de negocio: solo las citas PENDING pueden reprogramarse
         if (appointment.getStatus() != AppointmentStatus.PENDING) {
             throw new IllegalArgumentException(
                     "Esta cita está en estado " + appointment.getStatus()
                             + " y no puede reprogramarse. Las citas confirmadas deben cancelarse o contactar con administración.");
         }
 
+        LocalDateTime newStartTime = dto.getNewDateTime();
+        if (newStartTime == null) {
+            throw new IllegalArgumentException("La nueva fecha y hora de inicio es obligatoria.");
+        }
         if (newStartTime.isBefore(LocalDateTime.now())) {
             throw new IllegalArgumentException("No se pueden programar citas en el pasado.");
         }
 
         // Cambio de servicio opcional: recalcula duración y precio
-        if (serviceId != null) {
-            com.bookpulse.bookpulse_api.model.Service service = serviceRepository.findById(serviceId)
-                    .orElseThrow(() -> new IllegalArgumentException("No se encontró el servicio con ID: " + serviceId));
+        if (dto.getServiceId() != null) {
+            com.bookpulse.bookpulse_api.model.Service service = serviceRepository.findById(dto.getServiceId())
+                    .orElseThrow(() -> new IllegalArgumentException("No se encontró el servicio con ID: " + dto.getServiceId()));
             appointment.setService(service);
             appointment.setPrice(service.getPrice());
         }
@@ -250,9 +296,11 @@ public class AppointmentService {
     }
 
     @Transactional(readOnly = true)
-    public List<Appointment> getAppointmentsByUserId(Long userId) {
-
-        return appointmentRepository.findByUserId(userId);
+    public Page<Appointment> getMyAppointments(Long userId, List<AppointmentStatus> statuses, Pageable pageable) {
+        if (statuses == null || statuses.isEmpty()) {
+            return appointmentRepository.findByUserId(userId, pageable);
+        }
+        return appointmentRepository.findByUserIdAndStatusIn(userId, statuses, pageable);
     }
 
     /**

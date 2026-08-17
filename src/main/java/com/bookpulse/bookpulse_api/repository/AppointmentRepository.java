@@ -2,6 +2,8 @@ package com.bookpulse.bookpulse_api.repository;
 
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -37,6 +39,46 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
      * @return Una lista de {@link Appointment} pertenecientes al usuario.
      */
     List<Appointment> findByUserId(Long userId);
+
+    /**
+     * Recupera de forma paginada las citas de un usuario.
+     *
+     * @param userId   ID del usuario.
+     * @param pageable Paginación y orden.
+     * @return Una página de {@link Appointment} pertenecientes al usuario.
+     */
+    Page<Appointment> findByUserId(Long userId, Pageable pageable);
+
+    /**
+     * Recupera de forma paginada las citas de un usuario filtrando por uno o varios estados.
+     *
+     * @param userId    ID del usuario.
+     * @param statuses  Lista de estados permitidos (p. ej. PENDING, CONFIRMED).
+     * @param pageable  Paginación y orden.
+     * @return Una página de {@link Appointment} del usuario en los estados indicados.
+     */
+    Page<Appointment> findByUserIdAndStatusIn(Long userId, List<AppointmentStatus> statuses, Pageable pageable);
+
+    /**
+     * Recupera de forma paginada las citas que están en un estado concreto.
+     *
+     * @param status   Estado de la cita (p. ej. CONFIRMED).
+     * @param pageable Paginación y orden.
+     * @return Una página de {@link Appointment} en el estado indicado.
+     */
+    Page<Appointment> findByStatus(AppointmentStatus status, Pageable pageable);
+
+    /**
+     * Cuenta cuántas citas referencian un servicio concreto.
+     * <p>
+     * Se usa para impedir el borrado físico de un servicio que ya tiene historial
+     * de citas, evitando violaciones de integridad referencial en la BD.
+     * </p>
+     *
+     * @param serviceId ID del servicio.
+     * @return Número de citas que lo referencian.
+     */
+    long countByServiceId(Long serviceId);
 
     /**
      * Comprueba si existe alguna cita activa que ocupe o se solape con el rango horaria dado.
