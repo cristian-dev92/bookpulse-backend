@@ -75,4 +75,31 @@ public class AppointmentScheduler {
             System.out.println("[Scheduler] Se han liberado " + releasedCount + " citas expiradas automáticamente.");
         }
     }
+
+    /**
+     * Tarea programada que libera reservas en {@link AppointmentStatus#PENDING_PAYMENT}
+     * cuyo pago no se completó en un plazo razonable.
+     * <p>
+     * Se ejecuta cada 15 minutos (900.000 ms). Las citas en PENDING_PAYMENT creadas
+     * hace más de 15 minutos se marcan como CANCELLED, liberando la hora en el
+     * calendario sin intervención manual. La actualización es un UPDATE masivo
+     * atómico (ignora @Version) para no generar conflictos de bloqueo optimista.
+     * </p>
+     */
+    @Scheduled(fixedRate = 900000)
+    @Transactional
+    public void releaseExpiredPendingPayments() {
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(15);
+
+        int released = appointmentRepository.cancelExpiredPendingPayments(
+                AppointmentStatus.PENDING_PAYMENT,
+                AppointmentStatus.CANCELLED,
+                cutoff
+        );
+
+        if (released > 0) {
+            System.out.println("[Scheduler] Liberadas " + released
+                    + " reservas expiradas por falta de pago (PENDING_PAYMENT).");
+        }
+    }
 }

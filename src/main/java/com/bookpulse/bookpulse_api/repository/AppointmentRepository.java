@@ -2,6 +2,7 @@ package com.bookpulse.bookpulse_api.repository;
 
 import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
+import com.bookpulse.bookpulse_api.model.PaymentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repositorio de acceso a datos para la entidad {@link Appointment}.
@@ -107,4 +109,92 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     @Modifying
     @Query("UPDATE Appointment a SET a.status = :status WHERE a.id = :id")
     int updateStatusOnly(@Param("id") Long id, @Param("status") AppointmentStatus status);
+
+    /**
+     * Recupera una cita con sus relaciones {@code user} y {@code service} ya cargadas
+     * (JOIN FETCH), de modo que se pueda acceder a ellas fuera de la sesión de Hibernate.
+     * <p>
+     * Se usa desde el hilo asíncrono del {@code EmailService} para construir los
+     * correos sin {@code LazyInitializationException}.
+     * </p>
+     *
+     * @param id Identificador de la cita.
+     * @return Un {@link Optional} con la cita poblada y sus relaciones, o vacío si no existe.
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        JOIN FETCH a.user u
+        JOIN FETCH a.service s
+        WHERE a.id = :id
+    """)
+    Optional<Appointment> findByIdWithRelations(@Param("id") Long id);
+
+    /**
+     * Recupera la cita asociada a una sesión de Stripe Checkout concreta.
+     * <p>
+     * Se usa tanto en el endpoint de confirmación (tras el redirect de Checkout)
+     * como en el webhook {@code checkout.session.completed}.
+     * </p>
+     *
+     * @param sessionId Identificador de la sesión de Stripe.
+     * @return Un {@link Optional} con la cita, o vacío si no existe.
+     */
+    Optional<Appointment> findByStripeSessionId(String sessionId);
+
+    /**
+     * Actualiza de forma atómica una cita pendiente de pago a CONFIRMED + PAID.
+     * <p>
+     * Usa un UPDATE masivo que <strong>ignora el control de versión optimista</strong>
+     * ({@code @Version}): si el webhook de Stripe y el endpoint /confirm confirman
+     * la misma cita a la vez, solo el primero actualiza filas (retorno 1) y el
+     * segundo obtiene 0 sin lanzar {@code ObjectOptimisticLockingFailureException}.
+     * Así la confirmación es idempotente y libre de carreras.
+     * </p>
+     *
+     * @param id              Identificador de la cita.
+     * @param status          Estado objetivo (CONFIRMED).
+     * @param paymentStatus   Estado de pago objetivo (PAID).
+     * @param alreadyPaid     Valor que impide reprocesar una cita ya pagada.
+     * @param expectedStatuses Estados de partida permitidos (PENDING o PENDING_PAYMENT).
+     * @return Número de filas actualizadas (0 si la cita ya estaba pagada o no era pagable).
+     */
+    @Modifying
+    @Query("""
+        UPDATE Appointment a
+        SET a.status = :status, a.paymentStatus = :paymentStatus
+        WHERE a.id = :id
+          AND a.paymentStatus <> :alreadyPaid
+          AND a.status IN :expectedStatuses
+    """)
+    int confirmPaidIfPending(@Param("id") Long id,
+                             @Param("status") AppointmentStatus status,
+                             @Param("paymentStatus") PaymentStatus paymentStatus,
+                             @Param("alreadyPaid") PaymentStatus alreadyPaid,
+                             @Param("expectedStatuses") List<AppointmentStatus> expectedStatuses);
+
+    /**
+     * Libera (marca como CANCELLED) las citas que quedaron en {@code PENDING_PAYMENT}
+     * sin completar el pago antes de una fecha límite.
+     * <p>
+     * Usa un UPDATE masivo atómico para que el cron y otras operaciones concurrentes
+     * no generen conflictos de versión optimista. Se ignoran las citas sin
+     * {@code createdAt} (filas históricas previas a la nueva columna).
+     * </p>
+     *
+     * @param pendingPayment Estado de partida (PENDING_PAYMENT).
+     * @param cancelled      Estado objetivo (CANCELLED).
+     * @param cutoff         Momento límite: solo se liberan citas creadas antes de esta fecha.
+     * @return Número de citas liberadas.
+     */
+    @Modifying
+    @Query("""
+        UPDATE Appointment a
+        SET a.status = :cancelled
+        WHERE a.status = :pendingPayment
+          AND a.createdAt IS NOT NULL
+          AND a.createdAt < :cutoff
+    """)
+    int cancelExpiredPendingPayments(@Param("pendingPayment") AppointmentStatus pendingPayment,
+                                     @Param("cancelled") AppointmentStatus cancelled,
+                                     @Param("cutoff") LocalDateTime cutoff);
 }

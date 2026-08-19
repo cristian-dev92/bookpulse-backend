@@ -9,6 +9,12 @@ public enum PaymentStatus {
     /** El pago aún no se ha realizado (estado por defecto al reservar). */
     PENDING,
 
+    /** El pago no se ha completado (p. ej. sesión de checkout abandonada o fallida). */
+    UNPAID,
+
     /** El pago ha sido completado con éxito. */
-    PAID
+    PAID,
+
+    /** El importe ha sido devuelto al cliente tras cancelar la cita. */
+    REFUNDED
 }

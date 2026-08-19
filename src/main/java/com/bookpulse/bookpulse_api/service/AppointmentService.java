@@ -8,6 +8,7 @@ import com.bookpulse.bookpulse_api.model.Role;
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.AppointmentRepository;
 import com.bookpulse.bookpulse_api.repository.ServiceRepository;
+import com.stripe.exception.StripeException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -37,6 +38,7 @@ public class AppointmentService {
     private final TimeSlotService timeSlotService;
     private final ServiceRepository serviceRepository;
     private final EmailService emailService;
+    private final StripeService stripeService;
 
     /**
      * Inyección de dependencias a través del constructor.
@@ -45,13 +47,15 @@ public class AppointmentService {
      * @param timeSlotService       Servicio de cálculo de franjas horarias.
      * @param serviceRepository     Repositorio de servicios.
      * @param emailService          Servicio de notificaciones por correo.
+     * @param stripeService         Servicio de integración con Stripe (reembolsos).
      */
     @Autowired
-    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService, ServiceRepository serviceRepository, EmailService emailService) {
+    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService, ServiceRepository serviceRepository, EmailService emailService, StripeService stripeService) {
         this.appointmentRepository = appointmentRepository;
         this.timeSlotService = timeSlotService;
         this.serviceRepository = serviceRepository;
         this.emailService = emailService;
+        this.stripeService = stripeService;
     }
 
     /**
@@ -141,10 +145,99 @@ public class AppointmentService {
         // Al guardar, Hibernate gestiona el campo @Version automáticamente
         Appointment saved = appointmentRepository.save(newAppointment);
 
-        // Notificación por email con el resumen de la cita
-        emailService.sendAppointmentConfirmation(saved);
+        // Notificaciones transaccionales (asíncronas): confirmación al cliente + aviso al admin
+        emailService.sendBookingConfirmation(saved);
+        emailService.sendAdminNotification(saved);
 
         return saved;
+    }
+
+    /**
+     * Crea una cita en estado {@code PENDING_PAYMENT} y la devuelve sin enviar
+     * notificaciones: la cita queda bloqueada hasta que el usuario complete el
+     * pago en Stripe Checkout. Tras el cobro, {@link #confirmAppointmentAfterPayment(Long)}
+     * la pasa a CONFIRMED y dispara los correos.
+     *
+     * @param startTime Fecha y hora de inicio deseada.
+     * @param user      Usuario que realiza la reserva.
+     * @param serviceId ID del servicio a contratar.
+     * @param notes     Notas opcionales del cliente.
+     * @return La entidad {@link Appointment} guardada en estado PENDING_PAYMENT.
+     */
+    @Transactional
+    public Appointment createPendingPaymentAppointment(LocalDateTime startTime, User user, Long serviceId, String notes) {
+        if (startTime.isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("No se pueden reservar citas en el pasado.");
+        }
+
+        com.bookpulse.bookpulse_api.model.Service service = serviceRepository.findById(serviceId)
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró el servicio con ID: " + serviceId));
+
+        LocalDateTime endTime = startTime.plusMinutes(service.getDurationMinutes());
+
+        List<AppointmentStatus> excludedStatuses = List.of(AppointmentStatus.CANCELLED, AppointmentStatus.AVAILABLE);
+        boolean isOverlapping = appointmentRepository.existsOverlappingAppointment(startTime, endTime, excludedStatuses);
+
+        if (isOverlapping) {
+            throw new IllegalArgumentException("El hueco seleccionado ya no está disponible.");
+        }
+
+        Appointment newAppointment = new Appointment();
+        newAppointment.setStartTime(startTime);
+        newAppointment.setEndTime(endTime);
+        newAppointment.setStatus(AppointmentStatus.PENDING_PAYMENT);
+        newAppointment.setPaymentStatus(PaymentStatus.PENDING);
+        newAppointment.setUser(user);
+        newAppointment.setService(service);
+        newAppointment.setPrice(service.getPrice());
+        newAppointment.setNotes(notes);
+
+        return appointmentRepository.save(newAppointment);
+    }
+
+    /**
+     * Confirma una cita tras el cobro exitoso: la pasa a {@code CONFIRMED} con
+     * pago {@code PAID} y dispara las notificaciones (confirmación al cliente con
+     * su {@code .ics} y aviso al administrador).
+     * <p>
+     * Idempotente y resistente a carreras: usa un UPDATE condicional atómico
+     * (ignora {@code @Version}), de modo que si el webhook de Stripe y el endpoint
+     * {@code /confirm} procesan la misma cita a la vez, solo el primero confirma y
+     * envía los correos; el segundo no reenvía ni lanza el falso conflicto
+     * "hueco reservado por otro usuario".
+     * </p>
+     *
+     * @param appointmentId Identificador de la cita pagada.
+     * @return La entidad {@link Appointment} confirmada.
+     */
+    @Transactional
+    public Appointment confirmAppointmentAfterPayment(Long appointmentId) {
+        Appointment existing = appointmentRepository.findById(appointmentId)
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + appointmentId));
+
+        if (existing.getPaymentStatus() == PaymentStatus.PAID) {
+            return existing;
+        }
+
+        int updated = appointmentRepository.confirmPaidIfPending(
+                appointmentId,
+                AppointmentStatus.CONFIRMED,
+                PaymentStatus.PAID,
+                PaymentStatus.PAID,
+                List.of(AppointmentStatus.PENDING, AppointmentStatus.PENDING_PAYMENT)
+        );
+
+        if (updated == 0) {
+            return existing;
+        }
+
+        Appointment confirmed = appointmentRepository.findByIdWithRelations(appointmentId)
+                .orElseThrow(() -> new IllegalArgumentException("No se encontró la cita con ID: " + appointmentId));
+
+        emailService.sendBookingConfirmation(confirmed);
+        emailService.sendAdminNotification(confirmed);
+
+        return confirmed;
     }
 
     /**
@@ -180,6 +273,7 @@ public class AppointmentService {
     public List<Appointment> getAppointmentsBetween(LocalDateTime from, LocalDateTime to) {
         List<AppointmentStatus> activeStatuses = List.of(
                 AppointmentStatus.PENDING,
+                AppointmentStatus.PENDING_PAYMENT,
                 AppointmentStatus.CONFIRMED,
                 AppointmentStatus.COMPLETED
         );
@@ -213,7 +307,20 @@ public class AppointmentService {
         }
 
         appointment.setStatus(AppointmentStatus.CANCELLED);
-        return appointmentRepository.save(appointment);
+        Appointment saved = appointmentRepository.save(appointment);
+
+        // Reembolso automático si la cita estaba pagada (Stripe) y aviso al cliente
+        boolean refunded = refundIfPaid(saved);
+
+        // Notificación de cancelación al cliente (asíncrona). Un fallo de SMTP
+        // nunca debe impedir que el estado CANCELLED se persista en la BD.
+        try {
+            emailService.sendCancellationNotice(saved, refunded);
+        } catch (Exception e) {
+            System.err.println("[AppointmentService] No se pudo encolar el correo de cancelación: " + e.getMessage());
+        }
+
+        return saved;
     }
 
     /**
@@ -273,7 +380,12 @@ public class AppointmentService {
 
         appointment.setStartTime(newStartTime);
         appointment.setEndTime(newEndTime);
-        return appointmentRepository.save(appointment);
+        Appointment saved = appointmentRepository.save(appointment);
+
+        // Notificación de reprogramación con el nuevo .ics (asíncrona)
+        emailService.sendRescheduleNotice(saved);
+
+        return saved;
     }
 
     @Transactional
@@ -287,9 +399,14 @@ public class AppointmentService {
         appointmentRepository.updateStatusOnly(id, status);
         appointment.setStatus(status);
 
-        // Si la cita pasa a CONFIRMED, enviamos el correo de confirmación
+        // Notificaciones transaccionales asíncronas según el nuevo estado:
+        // CONFIRMED -> confirmación con .ics al cliente; CANCELLED -> aviso de cancelación.
         if (status == AppointmentStatus.CONFIRMED) {
-            emailService.sendAppointmentConfirmation(appointment);
+            emailService.sendBookingConfirmation(appointment);
+        } else if (status == AppointmentStatus.CANCELLED) {
+            // Reembolso automático si la cita estaba pagada (Stripe) y aviso al cliente
+            boolean refunded = refundIfPaid(appointment);
+            emailService.sendCancellationNotice(appointment, refunded);
         }
 
         return appointment;
@@ -320,6 +437,55 @@ public class AppointmentService {
         if (!isAdmin && !isOwner) {
             throw new AccessDeniedException("No tienes permisos para " + action);
         }
+    }
+
+    /**
+     * Reembolsa automáticamente el importe de una cita ya pagada cuando se cancela
+     * y marca su pago como {@link PaymentStatus#REFUNDED}.
+     * <p>
+     * <strong>Idempotencia:</strong> si Stripe ya devolvió el importe previamente
+     * (código {@code charge_already_refunded}), se considera el reembolso como
+     * completado y se sincroniza la BD a REFUNDED. El resto de errores de Stripe
+     * se registran en consola pero nunca impiden que la cancelación se complete.
+     * </p>
+     *
+     * @param appointment Cita que se cancela.
+     * @return {@code true} si el reembolso se procesó o ya estaba procesado (pago REFUNDED).
+     */
+    private boolean refundIfPaid(Appointment appointment) {
+        if (appointment.getPaymentStatus() != PaymentStatus.PAID) {
+            return false;
+        }
+        if (appointment.getStripeSessionId() == null || appointment.getStripeSessionId().isBlank()) {
+            return false;
+        }
+        try {
+            stripeService.refundPayment(appointment.getStripeSessionId());
+            markRefunded(appointment);
+            return true;
+        } catch (StripeException e) {
+            // Idempotencia: Stripe ya había procesado el reembolso antes
+            if ("charge_already_refunded".equals(e.getCode())) {
+                System.out.println("[AppointmentService] Stripe ya había reembolsado la cita #"
+                        + appointment.getId() + " (charge_already_refunded): se sincroniza el estado a REFUNDED.");
+                markRefunded(appointment);
+                return true;
+            }
+            System.err.println("[AppointmentService] No se pudo reembolsar la cita #"
+                    + appointment.getId() + ": " + e.getMessage());
+            return false;
+        } catch (Exception e) {
+            System.err.println("[AppointmentService] No se pudo reembolsar la cita #"
+                    + appointment.getId() + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Marca la cita como reembolsada y persiste el cambio. */
+    private void markRefunded(Appointment appointment) {
+        appointment.setPaymentStatus(PaymentStatus.REFUNDED);
+        appointmentRepository.save(appointment);
+        System.out.println("[AppointmentService] Pago de la cita #" + appointment.getId() + " marcado como REFUNDED.");
     }
 
 }

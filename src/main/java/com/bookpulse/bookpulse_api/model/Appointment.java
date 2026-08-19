@@ -64,6 +64,21 @@ public class Appointment {
     @Column(name = "payment_status", length = 20)
     private PaymentStatus paymentStatus = PaymentStatus.PENDING;
 
+    /** Identificador de la sesión de Stripe Checkout vinculada a la cita (si procede). */
+    @Column(name = "stripe_session_id", length = 255)
+    private String stripeSessionId;
+
+    /** Fecha y hora de creación del registro (para expirar reservas no pagadas). */
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if (this.createdAt == null) {
+            this.createdAt = LocalDateTime.now();
+        }
+    }
+
     /** Notas u observaciones adicionales. */
     @Column(columnDefinition = "TEXT")
     private String notes;

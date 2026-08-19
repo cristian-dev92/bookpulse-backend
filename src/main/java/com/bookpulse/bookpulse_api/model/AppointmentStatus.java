@@ -13,6 +13,9 @@ public enum AppointmentStatus {
     /** El hueco ha sido seleccionado por un usuario y está bloqueado temporalmente. */
     PENDING,
 
+    /** El hueco está bloqueado mientras el usuario completa el pago en Stripe Checkout. */
+    PENDING_PAYMENT,
+
     /** La cita ha sido confirmada y asociada definitivamente a un cliente. */
     CONFIRMED,
 
