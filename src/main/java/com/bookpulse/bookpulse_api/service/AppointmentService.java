@@ -19,6 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 
 /**
@@ -39,6 +42,7 @@ public class AppointmentService {
     private final ServiceRepository serviceRepository;
     private final EmailService emailService;
     private final StripeService stripeService;
+    private final TwilioService twilioService;
 
     /**
      * Inyección de dependencias a través del constructor.
@@ -48,14 +52,16 @@ public class AppointmentService {
      * @param serviceRepository     Repositorio de servicios.
      * @param emailService          Servicio de notificaciones por correo.
      * @param stripeService         Servicio de integración con Stripe (reembolsos).
+     * @param twilioService         Servicio de notificaciones por WhatsApp/SMS.
      */
     @Autowired
-    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService, ServiceRepository serviceRepository, EmailService emailService, StripeService stripeService) {
+    public AppointmentService(AppointmentRepository appointmentRepository, TimeSlotService timeSlotService, ServiceRepository serviceRepository, EmailService emailService, StripeService stripeService, TwilioService twilioService) {
         this.appointmentRepository = appointmentRepository;
         this.timeSlotService = timeSlotService;
         this.serviceRepository = serviceRepository;
         this.emailService = emailService;
         this.stripeService = stripeService;
+        this.twilioService = twilioService;
     }
 
     /**
@@ -236,6 +242,7 @@ public class AppointmentService {
 
         emailService.sendBookingConfirmation(confirmed);
         emailService.sendAdminNotification(confirmed);
+        sendWhatsApp(confirmed, "confirmacion");
 
         return confirmed;
     }
@@ -319,6 +326,7 @@ public class AppointmentService {
         } catch (Exception e) {
             System.err.println("[AppointmentService] No se pudo encolar el correo de cancelación: " + e.getMessage());
         }
+        sendWhatsApp(saved, "cancelacion");
 
         return saved;
     }
@@ -407,6 +415,7 @@ public class AppointmentService {
             // Reembolso automático si la cita estaba pagada (Stripe) y aviso al cliente
             boolean refunded = refundIfPaid(appointment);
             emailService.sendCancellationNotice(appointment, refunded);
+            sendWhatsApp(appointment, "cancelacion");
         }
 
         return appointment;
@@ -486,6 +495,93 @@ public class AppointmentService {
         appointment.setPaymentStatus(PaymentStatus.REFUNDED);
         appointmentRepository.save(appointment);
         System.out.println("[AppointmentService] Pago de la cita #" + appointment.getId() + " marcado como REFUNDED.");
+    }
+
+    /**
+     * Dispara una notificación por WhatsApp/SMS al cliente (asíncrona vía
+     * {@link TwilioService}). Solo se envía si el cliente tiene teléfono registrado
+     * y Twilio está configurado; cualquier fallo se loguea sin romper el flujo.
+     *
+     * @param appointment Cita sobre la que se notifica.
+     * @param type        {@code "confirmación"} o {@code "cancelación"}.
+     */
+    private void sendWhatsApp(Appointment appointment, String type) {
+        User user = appointment.getUser();
+        if (user == null || user.getPhone() == null || user.getPhone().isBlank()) {
+            System.out.println("[AppointmentService] Cliente sin teléfono: se omite el WhatsApp de " + type + ".");
+            return;
+        }
+
+        String body;
+        if ("confirmación".equals(type)) {
+            body = "Hola " + displayName(user)
+                    + ", tu cita en BookPulse ha quedado CONFIRMADA.\n"
+                    + "Servicio: " + serviceName(appointment) + "\n"
+                    + "Fecha y hora: " + formatDateTime(appointment.getStartTime()) + "\n"
+                    + "Precio: " + formatPrice(appointment.getPrice()) + "\n"
+                    + "¡Te esperamos! Puedes ver los detalles en tu panel.";
+        } else {
+            body = "Hola " + displayName(user)
+                    + ", tu cita para " + serviceName(appointment)
+                    + " del " + formatDateTime(appointment.getStartTime())
+                    + " ha sido CANCELADA.\n"
+                    + "Si pagaste, el reembolso se ha procesado automáticamente. Puedes reservar otro hueco cuando quieras.";
+        }
+
+        // Intenta WhatsApp y, si la API lo rechaza, el propio TwilioService reintenta por SMS.
+        twilioService.sendAppointmentNotification(user.getPhone(), body);
+    }
+
+    /**
+     * Dispara el recordatorio automático de una cita próxima (email + WhatsApp/SMS).
+     * <p>
+     * Invocado por la tarea programada {@code AppointmentTaskService}. Los envíos son
+     * asíncronos ({@link EmailService} y {@link TwilioService}): tras encolarlos, el
+     * scheduler marca {@code reminderSent = true} en la misma transacción para
+     * garantizar el control de envío único (1 solo aviso por cita).
+     * </p>
+     *
+     * @param appointment Cita CONFIRMED próxima a la que se le notificará.
+     */
+    public void sendReminder(Appointment appointment) {
+        emailService.sendAppointmentReminder(appointment);
+
+        User user = appointment.getUser();
+        if (user == null || user.getPhone() == null || user.getPhone().isBlank()) {
+            System.out.println("[AppointmentService] Cliente sin teléfono: se omite el WhatsApp de recordatorio.");
+            return;
+        }
+
+        String body = "Hola " + displayName(user)
+                + ", te recordamos tu cita en BookPulse:\n"
+                + "Servicio: " + serviceName(appointment) + "\n"
+                + "Fecha y hora: " + formatDateTime(appointment.getStartTime()) + "\n"
+                + "Precio: " + formatPrice(appointment.getPrice()) + "\n"
+                + "¡Te esperamos!";
+
+        twilioService.sendAppointmentNotification(user.getPhone(), body);
+    }
+
+    private String displayName(User user) {
+        return user != null && user.getName() != null && !user.getName().isBlank()
+                ? user.getName()
+                : (user != null && user.getEmail() != null ? user.getEmail() : "cliente");
+    }
+
+    private String serviceName(Appointment appointment) {
+        return appointment.getService() != null && appointment.getService().getName() != null
+                ? appointment.getService().getName()
+                : "Servicio no especificado";
+    }
+
+    private String formatDateTime(LocalDateTime value) {
+        return value != null
+                ? value.format(DateTimeFormatter.ofPattern("dd/MM/yyyy 'a las' HH:mm"))
+                : "—";
+    }
+
+    private String formatPrice(BigDecimal price) {
+        return price != null ? price.setScale(2, RoundingMode.HALF_UP) + " €" : "A confirmar";
     }
 
 }

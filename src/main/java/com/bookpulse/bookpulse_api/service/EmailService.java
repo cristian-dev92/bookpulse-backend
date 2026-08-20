@@ -4,12 +4,9 @@ import com.bookpulse.bookpulse_api.model.Appointment;
 import com.bookpulse.bookpulse_api.model.AppointmentStatus;
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.AppointmentRepository;
-import jakarta.mail.util.ByteArrayDataSource;
-import jakarta.mail.internet.MimeMessage;
+import com.google.gson.Gson;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -17,9 +14,18 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Servicio de envío de correos electrónicos transaccionales de BookPulse.
@@ -28,8 +34,14 @@ import java.util.Locale;
  * bloquear la respuesta HTTP de la API, y se ejecutan en su propia transacción
  * ({@code REQUIRES_NEW}) volviendo a cargar la cita con sus relaciones para
  * evitar {@code LazyInitializationException} al trabajar fuera del hilo original.
- * Cada envío se protege con try/catch: un fallo de SMTP nunca rompe el flujo
- * de reservas.
+ * Cada envío se protege con try/catch: un fallo del servicio de correo nunca
+ * rompe el flujo de reservas.
+ * </p>
+ * <p>
+ * El envío se realiza mediante la <strong>API REST de Resend</strong>
+ * ({@code POST https://api.resend.com/emails}) en lugar de SMTP, para evitar los
+ * timeouts del puerto 587. El adjunto {@code .ics} se incluye codificado en
+ * base64 en el campo {@code attachments}.
  * </p>
  *
  * @author Cristian
@@ -42,11 +54,20 @@ public class EmailService {
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.getDefault());
 
-    private final JavaMailSender mailSender;
+    private static final String RESEND_ENDPOINT = "https://api.resend.com/emails";
+
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
+
+    private final Gson gson = new Gson();
     private final AppointmentRepository appointmentRepository;
     private final IcsGeneratorService icsGeneratorService;
 
-    @Value("${mail.from:onboarding@resend.dev}")
+    @Value("${resend.api.key:}")
+    private String resendApiKey;
+
+    @Value("${mail.from:BookPulse <onboarding@resend.dev>}")
     private String fromAddress;
 
     @Value("${booking.admin.email:admin@demo.com}")
@@ -62,10 +83,8 @@ public class EmailService {
     private String testRecipientOverride;
 
     @Autowired
-    public EmailService(JavaMailSender mailSender,
-                        AppointmentRepository appointmentRepository,
+    public EmailService(AppointmentRepository appointmentRepository,
                         IcsGeneratorService icsGeneratorService) {
-        this.mailSender = mailSender;
         this.appointmentRepository = appointmentRepository;
         this.icsGeneratorService = icsGeneratorService;
     }
@@ -193,6 +212,43 @@ public class EmailService {
     }
 
     /**
+     * Recordatorio automático de cita al cliente (disparado por la tarea programada).
+     * <p>
+     * Se envía únicamente una vez por cita gracias al flag {@code reminderSent}
+     * de la entidad: la tarea lo pone a {@code true} nada más encolar el envío.
+     * </p>
+     */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void sendAppointmentReminder(Appointment appointment) {
+        Appointment fresh = reload(appointment);
+        if (fresh == null) {
+            return;
+        }
+
+        String clientEmail = resolveClientEmail(fresh.getUser());
+        if (clientEmail == null) {
+            return;
+        }
+
+        try {
+            String title = "Recordatorio: tu cita en BookPulse";
+            String summary = summaryTable(fresh);
+            String inner = """
+                <p>Hola <strong>%s</strong>,</p>
+                <p>Te recordamos que tienes una cita próximamente en BookPulse:</p>
+                %s
+                <p style="margin-top:20px;">Te esperamos. Puedes consultar o gestionar tu cita desde tu panel de usuario.</p>
+                """.formatted(displayName(fresh.getUser()), summary);
+
+            sendMime(clientEmail, title, buildHtml(title, inner), fresh);
+            logSent("recordatorio de cita", clientEmail);
+        } catch (Exception e) {
+            logError("No se pudo enviar el recordatorio de cita", e);
+        }
+    }
+
+    /**
      * Correo de reprogramación al cliente con la nueva fecha/hora y el nuevo {@code .ics}.
      */
     @Async
@@ -240,24 +296,49 @@ public class EmailService {
         return appointmentRepository.findByIdWithRelations(appointment.getId()).orElse(null);
     }
 
-    private void sendMime(String to, String subject, String htmlBody, Appointment appointment) throws jakarta.mail.MessagingException {
-        MimeMessage mimeMessage = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
+    /**
+     * Envía el correo mediante la API REST de Resend ({@code POST /emails}).
+     * <p>
+     * Construye el JSON con la ayuda de Gson (para escapar correctamente el HTML)
+     * e incluye el adjunto {@code .ics} en base64 si la cita lo tiene.
+     * </p>
+     */
+    private void sendMime(String to, String subject, String htmlBody, Appointment appointment) throws Exception {
+        if (resendApiKey == null || resendApiKey.isBlank()) {
+            throw new IllegalStateException("RESEND_API_KEY no configurado: no se puede enviar el correo");
+        }
 
-        helper.setFrom(fromAddress);
-        helper.setTo(to);
-        helper.setSubject(subject);
-        helper.setText(htmlBody, true);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("from", fromAddress);
+        body.put("to", List.of(to));
+        body.put("subject", subject);
+        body.put("html", htmlBody);
 
         String icsContent = icsGeneratorService.generateIcs(appointment, true);
         if (!icsContent.isBlank()) {
-            helper.addAttachment(
-                    icsGeneratorService.getIcsFileName(appointment),
-                    new ByteArrayDataSource(icsGeneratorService.toBytes(icsContent), "text/calendar; charset=UTF-8")
-            );
+            Map<String, Object> attachment = new LinkedHashMap<>();
+            attachment.put("filename", icsGeneratorService.getIcsFileName(appointment));
+            attachment.put("content", Base64.getEncoder().encodeToString(icsGeneratorService.toBytes(icsContent)));
+            body.put("attachments", List.of(attachment));
         }
 
-        mailSender.send(mimeMessage);
+        String json = gson.toJson(body);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(RESEND_ENDPOINT))
+                .timeout(Duration.ofSeconds(20))
+                .header("Authorization", "Bearer " + resendApiKey)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            System.out.println("[EmailService] Resend aceptó el correo (HTTP " + response.statusCode()
+                    + "): " + response.body());
+        } else {
+            throw new RuntimeException("Resend devolvió HTTP " + response.statusCode() + ": " + response.body());
+        }
     }
 
     /** Plantilla HTML con estilos inline ligeros y marca BookPulse. */

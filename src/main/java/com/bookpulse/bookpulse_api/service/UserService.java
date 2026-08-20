@@ -4,6 +4,8 @@ import com.bookpulse.bookpulse_api.dto.*;
 import com.bookpulse.bookpulse_api.model.Role; // Asegúrate de importar tu Enum/Clase Role si existe
 import com.bookpulse.bookpulse_api.model.User;
 import com.bookpulse.bookpulse_api.repository.UserRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -93,12 +95,13 @@ public class UserService {
     // ==========================================
 
     /**
-     * Devuelve el listado completo de todos los usuarios registrados.
+     * Devuelve el listado paginado de todos los usuarios registrados (Admin).
+     *
+     * @param pageable Parámetros de paginación (page, size, sort) aportados por Spring.
+     * @return Una página con los usuarios convertidos a {@link UserResponseDTO}.
      */
-    public List<UserResponseDTO> findAllUsers() {
-        return userRepository.findAll().stream()
-                .map(this::mapToDTO)
-                .collect(Collectors.toList());
+    public Page<UserResponseDTO> findAllUsers(Pageable pageable) {
+        return userRepository.findAll(pageable).map(this::mapToDTO);
     }
 
     /**

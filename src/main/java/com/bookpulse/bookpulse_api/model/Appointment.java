@@ -72,6 +72,12 @@ public class Appointment {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
+    /** Indica si el recordatorio automático de esta cita ya fue enviado.
+     *  Control de envío único: impide que la tarea programada reenvíe el aviso
+     *  y agote las cuotas de Resend/Twilio. Por defecto {@code false}. */
+    @Column(name = "reminder_sent", nullable = false, columnDefinition = "boolean default false")
+    private boolean reminderSent = false;
+
     @PrePersist
     protected void onCreate() {
         if (this.createdAt == null) {

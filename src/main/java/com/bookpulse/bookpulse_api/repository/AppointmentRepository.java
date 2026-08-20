@@ -197,4 +197,53 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
     int cancelExpiredPendingPayments(@Param("pendingPayment") AppointmentStatus pendingPayment,
                                      @Param("cancelled") AppointmentStatus cancelled,
                                      @Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * Cancela (marca como CANCELLED) las citas en estado PENDING creadas antes de
+     * la fecha límite sin que el cliente confirmara ni pagara.
+     * <p>
+     * Usa un UPDATE masivo atómico (ignora {@code @Version}) para que el cron y
+     * otras operaciones concurrentes no generen conflictos de bloqueo optimista.
+     * </p>
+     *
+     * @param pending   Estado de partida (PENDING).
+     * @param cancelled Estado objetivo (CANCELLED).
+     * @param cutoff    Momento límite: solo se liberan citas creadas antes de esta fecha.
+     * @return Número de citas liberadas.
+     */
+    @Modifying
+    @Query("""
+        UPDATE Appointment a
+        SET a.status = :cancelled
+        WHERE a.status = :pending
+          AND a.createdAt IS NOT NULL
+          AND a.createdAt < :cutoff
+    """)
+    int cancelExpiredPending(@Param("pending") AppointmentStatus pending,
+                             @Param("cancelled") AppointmentStatus cancelled,
+                             @Param("cutoff") LocalDateTime cutoff);
+
+    /**
+     * Recupera las citas CONFIRMED programadas dentro de un rango de fechas que aún
+     * no han recibido su recordatorio automático.
+     * <p>
+     * La condición {@code reminderSent = false} garantiza el control de envío único:
+     * cada cita solo se notifica una vez, evitando agotar las cuotas de Resend/Twilio.
+     * </p>
+     *
+     * @param status Estado requerido (CONFIRMED).
+     * @param from   Inicio del rango (inclusive).
+     * @param to     Fin del rango (inclusive).
+     * @return Lista de citas pendientes de recordatorio.
+     */
+    @Query("""
+        SELECT a FROM Appointment a
+        WHERE a.status = :status
+          AND a.startTime >= :from
+          AND a.startTime <= :to
+          AND a.reminderSent = false
+    """)
+    List<Appointment> findUpcomingForReminder(@Param("status") AppointmentStatus status,
+                                              @Param("from") LocalDateTime from,
+                                              @Param("to") LocalDateTime to);
 }

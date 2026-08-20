@@ -5,11 +5,11 @@ import com.bookpulse.bookpulse_api.dto.UpdateUserRoleRequestDTO;
 import com.bookpulse.bookpulse_api.dto.UserResponseDTO;
 import com.bookpulse.bookpulse_api.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/admin/users")
@@ -19,10 +19,10 @@ public class AdminUserController {
 
     private final UserService userService;
 
-    // 1. Listar todos los usuarios
+    // 1. Listar usuarios con paginación (GET ?page=0&size=10&sort=id,asc)
     @GetMapping
-    public ResponseEntity<List<UserResponseDTO>> getAllUsers() {
-        return ResponseEntity.ok(userService.findAllUsers());
+    public ResponseEntity<Page<UserResponseDTO>> getAllUsers(Pageable pageable) {
+        return ResponseEntity.ok(userService.findAllUsers(pageable));
     }
 
     // 2. Cambiar rol de un usuario (USER -> ADMIN o viceversa)
