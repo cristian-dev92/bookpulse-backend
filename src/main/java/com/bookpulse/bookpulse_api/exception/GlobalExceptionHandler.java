@@ -234,8 +234,9 @@ public class GlobalExceptionHandler {
      * @return Un {@link ResponseEntity} con estado 500 Internal Server Error.
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleGlobalException(
-            Exception ex, WebRequest request) {
+    public ResponseEntity<ErrorResponse> handleGlobalException(Exception ex, WebRequest request) {
+        // ESTA LÍNEA ES LA CLAVE PARA IMPRIMIR LA TRAZA REAL EN RENDER:
+        ex.printStackTrace();
 
         ErrorResponse error = new ErrorResponse(
                 LocalDateTime.now(),
@@ -314,17 +315,6 @@ public class GlobalExceptionHandler {
         );
 
         return new ResponseEntity<>(errorDetails, HttpStatus.CONFLICT);
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleAllExceptions(Exception ex) {
-        ex.printStackTrace(); // Imprime la traza completa en los logs de Render
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("error", ex.getClass().getName());
-        body.put("message", ex.getMessage());
-
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 
 }
