@@ -103,5 +103,9 @@ Para ejecutar este proyecto en local (usando archivos `.env`) o desplegarlo en e
 
 ---
 
+## 🗄️ Documentación Técnica
+https://cristian-dev92.github.io/bookpulse-backend/
 ## 📖 Documentación Automatizada (CI/CD)
 Este repositorio cuenta con un flujo de integración continua que genera y despliega la **Javadoc** de forma automática en cada `git push` a la rama `main`.
+
+
