@@ -38,10 +38,10 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Upload Artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@v3
         with:
-          path: 'target/reports/apidocs'
+          path: 'target/reports/apidocs' # Ruta donde mvn javadoc:javadoc genera los apidocs (verificada en local)
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4
