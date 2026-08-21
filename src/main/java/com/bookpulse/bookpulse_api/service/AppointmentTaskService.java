@@ -13,7 +13,6 @@ import java.util.List;
 
 /**
  * Componente de planificación (cron) encargado de las tareas automáticas del sistema.
- * <p>
  * Sustituye al antiguo {@code AppointmentScheduler} unificando toda la lógica de
  * mantenimiento en un único punto:
  * <ul>
@@ -26,7 +25,6 @@ import java.util.List;
  * Todas las tareas usan UPDATE masivos atómicos (ignoran {@code @Version}) para que
  * no entren en conflicto con las operaciones concurrentes de reservas o el webhook
  * de Stripe.
- * </p>
  *
  * @author Cristian
  * @since 1.1
@@ -46,7 +44,6 @@ public class AppointmentTaskService {
 
     /**
      * Limpieza de reservas expiradas sin pagar o confirmar.
-     * <p>
      * Se ejecuta cada 15 minutos (900.000 ms):
      * <ol>
      *   <li>Las citas en {@code PENDING} creadas hace más de 10 minutos sin confirmar
@@ -54,7 +51,6 @@ public class AppointmentTaskService {
      *   <li>Las citas en {@code PENDING_PAYMENT} creadas hace más de 15 minutos sin
      *       completar el pago en Stripe Checkout también se marcan como {@code CANCELLED}.</li>
      * </ol>
-     * </p>
      */
     @Scheduled(fixedRate = 900000)
     @Transactional
