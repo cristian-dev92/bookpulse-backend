@@ -316,4 +316,15 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(errorDetails, HttpStatus.CONFLICT);
     }
 
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>> handleAllExceptions(Exception ex) {
+        ex.printStackTrace(); // Imprime la traza completa en los logs de Render
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("error", ex.getClass().getName());
+        body.put("message", ex.getMessage());
+
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    }
+
 }
