@@ -63,6 +63,11 @@ public class StripeService {
      * @throws StripeException Si Stripe rechaza la operación.
      */
     public Session createCheckoutSession(Appointment appointment, String successUrl, String cancelUrl) throws StripeException {
+        // Asegúrate de limpiar las dobles barras diagonales antes de enviar a Stripe
+        String formattedSuccessUrl = successUrl.replaceAll("(?<!:)/{2,}", "/");
+        String formattedCancelUrl = cancelUrl.replaceAll("(?<!:)/{2,}", "/");
+        System.out.println("DEBUG Stripe Success URL: " + formattedSuccessUrl);
+        System.out.println("DEBUG Stripe Cancel URL: " + formattedCancelUrl);
         String serviceName = appointment.getService() != null && appointment.getService().getName() != null
                 ? appointment.getService().getName()
                 : "Servicio BookPulse";
@@ -72,8 +77,8 @@ public class StripeService {
         SessionCreateParams params = SessionCreateParams.builder()
                 .setMode(SessionCreateParams.Mode.PAYMENT)
                 .addPaymentMethodType(SessionCreateParams.PaymentMethodType.CARD)
-                .setSuccessUrl(successUrl)
-                .setCancelUrl(cancelUrl)
+                .setSuccessUrl(formattedSuccessUrl)
+                .setCancelUrl(formattedCancelUrl)
                 .setClientReferenceId(String.valueOf(appointment.getId()))
                 .putAllMetadata(Map.of("appointmentId", String.valueOf(appointment.getId())))
                 .addLineItem(SessionCreateParams.LineItem.builder()
